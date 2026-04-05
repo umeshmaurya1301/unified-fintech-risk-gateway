@@ -23,9 +23,9 @@ import gymnasium as gym
 from gymnasium import spaces
 
 
-class UnifiedFintechRiskGateway(gym.Env):
+class UnifiedFintechEnv(gym.Env):
     """
-    A Gymnasium environment that models a unified fintech risk gateway.
+    Gymnasium environment modelling a unified fintech risk gateway.
 
     The agent observes five real-time signals across a payment channel and
     must simultaneously decide:
@@ -33,6 +33,7 @@ class UnifiedFintechRiskGateway(gym.Env):
       - how to route the request across available infrastructure tiers, and
       - whether cryptographic verification is required.
 
+    Previously known as ``UnifiedFintechRiskGateway``.
     Episode length is capped at ``self.max_steps`` steps.
     """
 
