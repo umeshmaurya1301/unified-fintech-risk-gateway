@@ -99,18 +99,128 @@ class UnifiedFintechRiskGateway(gym.Env):
         options: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """
-        Reset the environment to an initial state.
+        Reset the environment to an initial state and return the first
+        observation together with an empty info dict.
+
+        Calling ``super().reset(seed=seed)`` seeds ``self.np_random`` so
+        that all subsequent calls to ``_generate_transaction`` are
+        reproducible when a seed is supplied.
 
         Returns
         -------
         observation : np.ndarray, shape (5,), dtype float32
-            The initial observation sampled from ``observation_space``.
+            The initial observation produced by the Synthetic Data Engine.
         info : dict
-            Auxiliary diagnostic information (empty for now).
+            Empty auxiliary info dict (Gymnasium API requirement).
         """
+        # Seed self.np_random via the Gymnasium base class.
         super().reset(seed=seed)
-        # TODO: implement initial state logic
-        raise NotImplementedError
+
+        # ---- Episode counters ----------------------------------------
+        self._current_step: int = 0
+
+        # ---- Rolling-window accumulators (used by step() later) -------
+        # These track an exponential moving average of Kafka Lag and API
+        # Latency across steps, giving the agent a smoothed P99 signal.
+        self._rolling_lag: float = 0.0
+        self._rolling_latency: float = 0.0
+
+        # ---- Generate the first transaction observation ----------------
+        self.state: np.ndarray = self._generate_transaction()
+
+        return self.state, {}
+
+    # ------------------------------------------------------------------
+    # _generate_transaction — Synthetic Data Engine
+    # ------------------------------------------------------------------
+    def _generate_transaction(self) -> np.ndarray:
+        """
+        Produce a single synthetic transaction observation vector.
+
+        Event distribution
+        ------------------
+        - 80 % → **Normal Traffic**   low risk, stable infra
+        - 10 % → **Flash Sale**        very low risk, heavy Kafka & latency spike
+        - 10 % → **Botnet Attack**     extreme risk, moderate infra stress
+
+        All outputs are clipped to the declared ``observation_space`` bounds
+        and cast to ``np.float32``.
+
+        Returns
+        -------
+        obs : np.ndarray, shape (5,), dtype float32
+            [channel, risk_score, kafka_lag, api_latency, rolling_p99_sla]
+        """
+        rng = self.np_random  # gymnasium-seeded Generator
+
+        # ---- Event trigger (draw a single uniform float) ---------------
+        roll: float = rng.uniform(0.0, 1.0)
+
+        if roll < 0.80:
+            # ==============================================================
+            # NORMAL TRAFFIC — 80 %
+            # Low risk, stable and low infrastructure load.
+            # ==============================================================
+            channel      = float(rng.integers(0, 3))          # {0, 1, 2}
+            risk_score   = rng.uniform(5.0, 30.0)
+            kafka_lag    = rng.uniform(0.0, 500.0)
+            api_latency  = rng.uniform(50.0, 300.0)
+            p99_sla      = rng.uniform(80.0, 400.0)
+            event_type   = "normal"
+
+        elif roll < 0.90:
+            # ==============================================================
+            # FLASH SALE — 10 %
+            # Massive transaction volume; risk is very low (legitimate users)
+            # but Kafka consumer lag spikes heavily and API latency degrades.
+            # ==============================================================
+            channel      = float(rng.integers(0, 3))
+            risk_score   = rng.uniform(0.0, 10.0)
+            kafka_lag    = rng.uniform(3000.0, 8000.0)
+            api_latency  = rng.uniform(800.0, 3000.0)
+            p99_sla      = rng.uniform(1200.0, 4000.0)
+            event_type   = "flash_sale"
+
+        else:
+            # ==============================================================
+            # BOTNET ATTACK — 10 %
+            # Extreme risk signal; infra is stressed but deliberately does
+            # NOT max out (attackers throttle to avoid detection).
+            # ==============================================================
+            channel      = float(rng.integers(0, 3))
+            risk_score   = rng.uniform(85.0, 100.0)
+            kafka_lag    = rng.uniform(500.0, 3000.0)
+            api_latency  = rng.uniform(300.0, 1500.0)
+            p99_sla      = rng.uniform(500.0, 2000.0)
+            event_type   = "botnet_attack"
+
+        # ---- Update rolling accumulators (EMA, α = 0.2) ----------------
+        # Smooths out per-step noise so the agent sees a stable P99 trend.
+        alpha: float = 0.2
+        self._rolling_lag     = alpha * kafka_lag   + (1.0 - alpha) * self._rolling_lag
+        self._rolling_latency = alpha * api_latency + (1.0 - alpha) * self._rolling_latency
+
+        # Use the EMA latency as the Rolling P99 SLA observation so that
+        # the agent gets a smoothed signal rather than a raw point sample.
+        # Clamp to the declared SLA high bound just in case.
+        smoothed_p99 = min(self._rolling_latency, 5000.0)
+
+        # ---- Build & clip the observation vector -----------------------
+        obs = np.array(
+            [channel, risk_score, kafka_lag, api_latency, smoothed_p99],
+            dtype=np.float32,
+        )
+        obs = np.clip(
+            obs,
+            self.observation_space.low,
+            self.observation_space.high,
+        ).astype(np.float32)
+
+        # Attach event metadata to the instance so step() can read it
+        # for reward shaping without re-exposing it in the obs vector.
+        self._last_event_type: str = event_type
+
+        return obs
 
     # ------------------------------------------------------------------
     # step — Gymnasium API
