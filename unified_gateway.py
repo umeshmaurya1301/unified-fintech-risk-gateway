@@ -355,190 +355,155 @@ class UnifiedFintechEnv(gym.Env):
         )
 
     # ------------------------------------------------------------------
-    # step — Gymnasium API
+    # step — OpenEnv API
     # ------------------------------------------------------------------
     def step(
         self,
-        action: np.ndarray,
-    ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
+        action: UFRGAction,
+    ) -> tuple[UFRGObservation, float, bool, dict[str, Any]]:
         """
         Run one time-step of the environment's dynamics.
 
+        OpenEnv spec: accepts a typed ``UFRGAction`` and returns a 4-tuple
+        ``(observation, reward, done, info)`` — no ``truncated`` flag.
+
+        Reward is scaled to **[0.0, 1.0]**:
+          - Baseline for a standard processed step: ``+0.8``
+          - Throttle penalty (traffic dropped):     ``-0.2``
+          - SLA breach (rolling P99 > 800 ms):      ``-0.3``
+          - Circuit-breaker tripped:                ``-0.5``
+          - Catastrophic fraud (SkipVerify + Approve + high-risk): ``-1.0``
+          - Crash (lag > 4 000 after modifiers):    reward forced to ``0.0``
+
+        Final reward is clipped to ``[0.0, 1.0]`` before return.
+
         Parameters
         ----------
-        action : np.ndarray, shape (3,), dtype int64
-            A sampled or agent-selected action from ``action_space``.
-            action[0] — Risk Decision  (0=APPROVE, 1=REJECT, 2=CHALLENGE)
-            action[1] — Infra Routing  (0=ROUTE_NORMAL, 1=THROTTLE, 2=CIRCUIT_BREAKER)
-            action[2] — Crypto Verify  (0=FULL_VERIFY, 1=SKIP_VERIFY)
+        action : UFRGAction
+            Typed Pydantic action validated by the OpenEnv contract.
 
         Returns
         -------
-        observation  : np.ndarray, shape (5,), dtype float32
-            Next transaction observation from the Synthetic Data Engine.
-        reward       : float
-            Composite reward reflecting risk accuracy, crypto cost, infra
-            health, and SLA compliance.
-        terminated   : bool
-            True on a system crash (kafka_lag > 4 000 without circuit breaker)
-            or when ``max_steps`` is reached.
-        truncated    : bool
-            Always False — episode truncation is folded into ``terminated``.
-        info         : dict
-            Auxiliary diagnostics (event type, component rewards, flags).
+        observation : UFRGObservation
+            Next typed observation from the Synthetic Data Engine.
+        reward : float
+            Step reward in ``[0.0, 1.0]``.
+        done : bool
+            ``True`` on crash or episode end.
+        info : dict
+            Debug / diagnostic payload.
         """
         # ------------------------------------------------------------------
-        # Unpack action dimensions
+        # ① Unpack state from the typed current observation
         # ------------------------------------------------------------------
-        risk_decision: int = int(action[0])  # 0=APPROVE  1=REJECT  2=CHALLENGE
-        infra_routing: int = int(action[1])  # 0=ROUTE_NORMAL  1=THROTTLE  2=CIRCUIT_BREAKER
-        crypto_verify: int = int(action[2])  # 0=FULL_VERIFY  1=SKIP_VERIFY
+        risk_score:  float = self._current_obs.risk_score
+        kafka_lag:   float = self._current_obs.kafka_lag
+        rolling_p99: float = self._current_obs.rolling_p99
 
-        # ------------------------------------------------------------------
-        # Unpack current observation (from typed Pydantic model)
-        # ------------------------------------------------------------------
-        obs = self._current_obs
-        risk_score:  float = obs.risk_score
-        kafka_lag:   float = obs.kafka_lag
-        rolling_p99: float = obs.rolling_p99
-
-        # ------------------------------------------------------------------
-        # Reward accumulators & flags
-        # ------------------------------------------------------------------
-        total_reward: float = 0.0
-        terminated:   bool  = False
         circuit_breaker_tripped: bool = False
-
-        # Partial rewards stored for the info dict
-        reward_risk:   float = 0.0
-        reward_crypto: float = 0.0
-        reward_infra:  float = 0.0
-        reward_sla:    float = 0.0
-        reward_crash:  float = 0.0
+        done: bool = False
 
         # ------------------------------------------------------------------
-        # ① Risk Decision reward
-        #    Penalties/bonuses depend on whether this is a high-risk txn.
+        # ② Apply Action Modifiers to internal accumulators
         # ------------------------------------------------------------------
-        if risk_score > 80.0:
-            # High-risk transaction — the agent must not approve blindly.
-            if risk_decision == 0:      # APPROVE  → catastrophic miss
-                reward_risk = -150.0
-            elif risk_decision == 1:    # REJECT   → correct decisive action
-                reward_risk =  +30.0
-            else:                       # CHALLENGE → cautious, earns partial credit
-                reward_risk =  +15.0
-        else:
-            # Low-risk transaction — blocking legitimate traffic has a cost.
-            if risk_decision == 0:      # APPROVE  → correct, frictionless
-                reward_risk = +10.0
-            elif risk_decision == 1:    # REJECT   → false positive, hurts UX
-                reward_risk = -20.0
-            else:                       # CHALLENGE → unnecessary friction
-                reward_risk =  -5.0
 
-        total_reward += reward_risk
-
-        # ------------------------------------------------------------------
-        # ② Crypto Verify cost / fraud gate
-        #    FULL_VERIFY adds lag & latency pressure on the accumulator.
-        #    SKIP_VERIFY is faster but must never be paired with APPROVE on
-        #    a high-risk transaction — doing so triggers a fraud penalty.
-        # ------------------------------------------------------------------
-        if crypto_verify == 0:          # FULL_VERIFY — thorough but expensive
+        # — Crypto gate —
+        if action.crypto_verify == 0:       # FullVerify — thorough but expensive
             self._rolling_lag     += 150.0
             self._rolling_latency += 200.0
-        else:                           # SKIP_VERIFY — fast path
+        else:                               # SkipVerify — fast path, sheds queue
             self._rolling_lag -= 100.0
-            # Critical fraud gate: SKIP + APPROVE on high-risk = catastrophic
-            if risk_decision == 0 and risk_score > 80.0:
-                reward_crypto = -200.0
-                total_reward  += reward_crypto
 
-        # ------------------------------------------------------------------
-        # ③ Infrastructure Routing & Circuit Breaker
-        #    Actions directly mutate the EMA accumulators so their effect
-        #    propagates organically into the next _generate_transaction() call.
-        # ------------------------------------------------------------------
-        if infra_routing == 0:          # ROUTE_NORMAL — standard path, adds load
+        # — Infrastructure routing —
+        if action.infra_routing == 0:       # Normal — standard path, adds load
             self._rolling_lag += 100.0
 
-        elif infra_routing == 1:        # THROTTLE — sheds load; penalises good traffic
+        elif action.infra_routing == 1:     # Throttle — sheds load
             self._rolling_lag -= 300.0
-            reward_infra  = -10.0
-            total_reward += reward_infra
 
-        else:                           # CIRCUIT_BREAKER — nuclear option
-            reward_infra  = -100.0
-            total_reward += reward_infra
-            # Instantly heal internal state to a safe baseline
+        else:                               # CircuitBreaker — instant full reset
             self._rolling_lag     = 0.0
             self._rolling_latency = 50.0
             circuit_breaker_tripped = True
 
-        # Guard: accumulators must never go negative
+        # Guard: accumulators must never dip below zero
         self._rolling_lag     = max(0.0, self._rolling_lag)
         self._rolling_latency = max(0.0, self._rolling_latency)
 
         # ------------------------------------------------------------------
-        # ④ Global SLA degradation penalty  (evaluated on current-tick obs)
+        # ③ Reward calculation — baseline [0.0, 1.0] scale
         # ------------------------------------------------------------------
+        reward: float = 0.8     # Baseline: one successful transaction processed
+
+        # — Traffic-drop penalty (throttle hurts legitimate users) —
+        if action.infra_routing == 1:
+            reward -= 0.2
+
+        # — SLA breach penalty (evaluated on the observation that triggered this step) —
         if rolling_p99 > 800.0:
-            reward_sla   = -20.0
-            total_reward += reward_sla
+            reward -= 0.3
+
+        # — System-halt penalty (circuit breaker is a nuclear option) —
+        if circuit_breaker_tripped:
+            reward -= 0.5
+
+        # — Catastrophic fraud gate —
+        #   SkipVerify + Approve on a confirmed high-risk transaction
+        #   is a complete security failure.
+        if (
+            action.crypto_verify  == 1      # SkipVerify
+            and action.risk_decision == 0   # Approve
+            and risk_score > 80.0           # High-risk confirmed
+        ):
+            reward -= 1.0
 
         # ------------------------------------------------------------------
-        # ④ Kafka crash penalty  (evaluated on current-tick obs)
-        #    The circuit breaker is the one sanctioned escape hatch — if it
-        #    was tripped this tick the lag has already been zeroed, so we
-        #    skip the crash check to avoid double-penalising the agent.
+        # ④ Crash condition
+        #    Evaluated on _rolling_lag AFTER modifiers have been applied.
+        #    Circuit breaker is the only sanctioned escape hatch.
         # ------------------------------------------------------------------
-        if kafka_lag > 4000.0 and not circuit_breaker_tripped:
-            reward_crash = -500.0
-            total_reward += reward_crash
-            terminated    = True
+        if self._rolling_lag > 4000.0 and not circuit_breaker_tripped:
+            reward = 0.0        # Force reward to zero — system is down
+            done   = True
 
         # ------------------------------------------------------------------
-        # Advance episode
+        # ⑤ Advance episode counter and generate next observation
         # ------------------------------------------------------------------
         self.current_step += 1
 
-        # Produce the next observation; the mutated EMA accumulators carry
-        # the agent's infra decisions forward into the next transaction.
         self._current_obs = self._generate_transaction(self.current_task)
 
-        # Max-steps termination (folded into terminated per spec)
-        if self.current_step >= self.max_steps:
-            terminated = True
+        if self.current_step >= self.max_steps and not done:
+            done = True
 
         # ------------------------------------------------------------------
-        # Info dict — structured diagnostics for logging / debugging
+        # ⑥ Clip reward to [0.0, 1.0] and build info payload
         # ------------------------------------------------------------------
+        final_reward: float = max(0.0, min(1.0, reward))
+
         info: dict[str, Any] = {
             # Episode progress
-            "step":                    self.current_step,
-            "event_type":              self._last_event_type,
-            # Observation snapshot that drove the decisions this tick
-            "obs_risk_score":          risk_score,
-            "obs_kafka_lag":           kafka_lag,
-            "obs_rolling_p99":         rolling_p99,
-            # Action taken
-            "action_risk_decision":    risk_decision,
-            "action_infra_routing":    infra_routing,
-            "action_crypto_verify":    crypto_verify,
-            # Reward breakdown
-            "reward_risk":             reward_risk,
-            "reward_crypto":           reward_crypto,
-            "reward_infra":            reward_infra,
-            "reward_sla":              reward_sla,
-            "reward_crash":            reward_crash,
-            "total_reward":            total_reward,
+            "step":                     self.current_step,
+            "task":                     self.current_task,
+            "event_type":               self._last_event_type,
+            # Observation that drove this step's decisions
+            "obs_risk_score":           risk_score,
+            "obs_kafka_lag":            kafka_lag,
+            "obs_rolling_p99":          rolling_p99,
+            # Actions taken
+            "action_risk_decision":     action.risk_decision,
+            "action_infra_routing":     action.infra_routing,
+            "action_crypto_verify":     action.crypto_verify,
+            # Reward breakdown (pre-clip, for debugging)
+            "reward_raw":               reward,
+            "reward_final":             final_reward,
             # Flags
-            "circuit_breaker_tripped": circuit_breaker_tripped,
-            "terminated":              terminated,
+            "circuit_breaker_tripped":  circuit_breaker_tripped,
+            "crashed":                  self._rolling_lag > 4000.0,
+            "done":                     done,
             # Post-action accumulator state
-            "internal_rolling_lag":    self._rolling_lag,
-            "internal_rolling_latency":self._rolling_latency,
+            "internal_rolling_lag":     self._rolling_lag,
+            "internal_rolling_latency": self._rolling_latency,
         }
 
-        return self._current_obs, float(total_reward), terminated, False, info
+        return self._current_obs, final_reward, done, info
