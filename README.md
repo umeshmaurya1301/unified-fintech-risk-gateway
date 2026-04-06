@@ -2,18 +2,19 @@
 
 # 🛡️ Unified Fintech Risk Gateway
 
-### _A Gymnasium Environment for Multi-Objective Reinforcement Learning in Real-Time Payment Infrastructure_
+### An OpenEnv Environment for Multi-Objective SRE Decision-Making in Real-Time UPI Payment Infrastructure
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://python.org)
-[![Gymnasium 0.29](https://img.shields.io/badge/Gymnasium-0.29.1-green?logo=openaigym&logoColor=white)](https://gymnasium.farama.org/)
+[![OpenEnv Validated](https://img.shields.io/badge/openenv_validate-Passed-brightgreen?logo=checkmarx&logoColor=white)](#)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Pydantic v2](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)](https://docs.pydantic.dev/)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://docker.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
-**A production-grade Gymnasium environment that trains RL agents to make three simultaneous decisions — risk disposition, infrastructure routing, and cryptographic verification — on every transaction in a simulated high-throughput UPI payment pipeline.**
+**A typed, task-driven OpenEnv environment where an LLM agent must simultaneously manage fraud risk, Kafka infrastructure health, and P99 SLA compliance across escalating difficulty tiers — one transaction at a time.**
 
-_Built for the Meta PyTorch OpenEnv Hackathon_
+_Built for the Meta OpenEnv Hackathon · Passes `openenv validate` ✅_
 
 </div>
 
@@ -21,255 +22,278 @@ _Built for the Meta PyTorch OpenEnv Hackathon_
 
 ## Table of Contents
 
-- [The Problem](#-the-problem)
-- [The Solution](#-the-solution)
-- [Environment Architecture](#-environment-architecture)
-- [Action Space — The Three Simultaneous Decisions](#-action-space--the-three-simultaneous-decisions)
-- [Observation Space — Five Real-Time Signals](#-observation-space--five-real-time-signals)
-- [The Synthetic Data Engine](#-the-synthetic-data-engine)
-- [Mathematical Trade-offs & Anti–Reward Hacking](#-mathematical-trade-offs--antireward-hacking)
-- [Quickstart — Docker](#-quickstart--docker)
-- [Quickstart — Local](#-quickstart--local)
+- [The Mission](#-the-mission–why-this-environment-exists)
+- [How It Works](#-how-it-works)
+- [Task Progression](#-task-progression–easy-medium-hard)
+- [Reward Logic](#-reward-logic–the-01-contract)
+- [Typed Data Models](#-typed-data-models–the-openenv-contract)
+- [Setup & Quickstart](#-setup--quickstart)
+- [Inference Script](#-inference-script)
 - [Project Structure](#-project-structure)
-- [Red Team Audit Summary](#-red-team-audit-summary)
+- [Architecture Diagram](#-architecture-diagram)
 
 ---
 
-## 🔥 The Problem
+## 🎯 The Mission — Why This Environment Exists
 
-Modern fintech payment systems — particularly India's UPI infrastructure processing **14+ billion transactions/month** — are built on isolated, static microservices:
+India's **Unified Payments Interface (UPI)** processes over **14 billion transactions per month**. Behind every tap-to-pay lies a fragile chain of microservices — risk engines, Kafka brokers, bank API gateways, and cryptographic verification layers — each managed in isolation by static rules that know nothing about each other.
+
+### The SRE/DevOps Challenge
+
+In production payment infrastructure, three catastrophic failure modes destroy uptime and revenue:
 
 ```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ Risk Engine  │    │ Infra Router │    │ Crypto Layer │
-│ (Static)     │    │ (Static)     │    │ (Static)     │
-│              │    │              │    │              │
-│ IF risk > T: │    │ Round-robin  │    │ Verify all   │
-│   REJECT     │    │ load balance │    │ always       │
-└──────┬───────┘    └──────┬───────┘    └──────┬───────┘
-       │                   │                   │
-       └───────────────────┴───────────────────┘
-                           │
-                    Static thresholds.
-                    No cross-system awareness.
-                    Catastrophic under load.
+┌────────────────────────────────────────────────────────────┐
+│                 THE THREE FAILURE MODES                     │
+│                                                            │
+│  ① KAFKA LAG EXPLOSION                                     │
+│     Consumer lag > 4,000 msgs → system crash                │
+│     Cause: Flash sales, botnet volume, blind routing        │
+│                                                            │
+│  ② P99 SLA BREACH                                          │
+│     Rolling latency > 800 ms → penalty + merchant churn     │
+│     Cause: Crypto overhead, accumulating latency debt        │
+│                                                            │
+│  ③ FRAUD BYPASS                                             │
+│     Skip verification on high-risk txn → catastrophic loss  │
+│     Cause: Cutting corners for speed under pressure          │
+└────────────────────────────────────────────────────────────┘
 ```
 
-**The Siloed Systems Problem:**
+**No single static rule can balance all three.** An SRE needs to dynamically trade off queue health against latency, security against throughput, and caution against speed — on every single transaction.
 
-| Failure Mode | Root Cause | Real-World Impact |
+**This environment teaches an AI agent to make exactly those decisions.**
+
+---
+
+## ⚙️ How It Works
+
+The agent observes **five real-time signals** and outputs **three simultaneous decisions** on every step:
+
+### Observation Space (`UFRGObservation`)
+
+| Signal | Range | What It Measures |
 |---|---|---|
-| **Flash Sale Meltdown** | Risk engine approves everything (low risk), infra router is unaware of 10× volume spike, Kafka queues overflow | Complete payment outage (Flipkart Big Billion Day scenarios) |
-| **Botnet Bypass** | Crypto layer verifies all traffic uniformly, cannot prioritise high-risk checks, attack blends in under normal latency | ₹200Cr+ fraud losses per year across Indian fintech |
-| **SLA Death Spiral** | Each system independently adds latency — crypto verification + risk scoring + routing overhead compound unchecked | P99 latency breach → merchant churn → revenue collapse |
+| `channel` | `[0, 2]` | Payment channel — 0: P2P, 1: P2M, 2: AutoPay |
+| `risk_score` | `[0, 100]` | Transaction fraud risk — >80 is HIGH RISK |
+| `kafka_lag` | `[0, 10000]` | Consumer-group queue backlog — >4000 = **CRASH** |
+| `api_latency` | `[0, 5000]` | Downstream bank API latency in ms |
+| `rolling_p99` | `[0, 5000]` | EMA-smoothed P99 latency — >800 = **SLA BREACH** |
 
-These systems fail because **no single decision-maker sees the full picture**. The risk engine doesn't know Kafka is overloaded. The infrastructure router doesn't know a botnet is attacking. The crypto layer doesn't know the pipeline is about to crash.
+### Action Space (`UFRGAction`)
+
+| Dimension | Choices | Trade-off |
+|---|---|---|
+| **Risk Decision** | 0=Approve · 1=Reject · 2=Challenge | Throughput vs. fraud exposure |
+| **Infra Routing** | 0=Normal · 1=Throttle · 2=CircuitBreaker | Queue health vs. dropped traffic |
+| **Crypto Verify** | 0=FullVerify · 1=SkipVerify | Security vs. latency |
+
+**18 unique action combinations** per step. Every choice has a cost. Every shortcut has a consequence.
 
 ---
 
-## 💡 The Solution
+## 📊 Task Progression — Easy → Medium → Hard
 
-The **Unified Fintech Risk Gateway (UFRG)** replaces three isolated decision-makers with a single **Global Gateway Orchestrator** trained via Reinforcement Learning:
+The OpenEnv rubric requires three tasks with increasing difficulty. Each task models a real-world SRE scenario:
+
+### 🟢 Task: `easy` — Normal Traffic
+
+| Property | Value |
+|---|---|
+| **Scenario** | Standard UPI routing during business hours |
+| **Traffic Mix** | 100% normal transactions |
+| **Risk Score** | Low (5–30) — no fraud pressure |
+| **Infra Stress** | Minimal — lag/latency near baseline with minor jitter |
+| **Agent Challenge** | Learn the approval baseline; understand action costs |
+
+The agent should learn to **approve everything, skip verify, route normal** — harvesting the `0.8` baseline reward consistently.
+
+---
+
+### 🟡 Task: `medium` — Flash Sale
+
+| Property | Value |
+|---|---|
+| **Scenario** | Flipkart Big Billion Day — massive legitimate volume spike |
+| **Traffic Mix** | 80% normal / 20% flash-sale bursts |
+| **Risk Score** | Very low (0–10) during spikes — users are real, not attackers |
+| **Infra Stress** | **Severe** — Kafka lag surges +500–1000 per spike tick, latency degrades +100–300 |
+| **Agent Challenge** | Manage infrastructure without falsely rejecting legitimate users |
+
+The agent must learn to **throttle proactively** during volume spikes to prevent lag from crossing the 4,000 crash threshold — but throttling costs `-0.2` per step, so timing matters.
+
+---
+
+### 🔴 Task: `hard` — Botnet Storm
+
+| Property | Value |
+|---|---|
+| **Scenario** | Sustained distributed credential-stuffing attack |
+| **Traffic Mix** | 100% high-risk botnet traffic every tick |
+| **Risk Score** | Extreme (85–100) on every transaction |
+| **Infra Stress** | Steady accumulator growth — lag +100–400, latency +50–150 per tick |
+| **Agent Challenge** | Balance fraud rejection against infrastructure collapse |
+
+The agent must **reject or challenge every transaction** while managing the relentless infrastructure pressure. Approving + SkipVerify on a high-risk transaction triggers the catastrophic **-1.0 fraud penalty** — immediately zeroing the reward.
+
+---
+
+## 💰 Reward Logic — The [0, 1] Contract
+
+Unlike environments with unbounded negative rewards, **UFRG normalizes all rewards to `[0.0, 1.0]`** per the OpenEnv specification. This creates a clean, interpretable signal for LLM agents:
 
 ```
-                    ┌─────────────────────────────────┐
-                    │   Unified Fintech Risk Gateway   │
-                    │      (RL Agent — PPO / SAC)      │
-                    │                                  │
-  Observation ─────▶│  ┌─────────┬──────────┬───────┐ │──────▶ Action
-  [5 signals]       │  │  Risk   │  Infra   │Crypto │ │    [3 decisions]
-                    │  │Decision │ Routing  │Verify │ │
-                    │  └─────────┴──────────┴───────┘ │
-                    │                                  │
-                    │  ONE agent. THREE decisions.     │
-                    │  EVERY transaction. EVERY tick.  │
-                    └─────────────────────────────────┘
+Reward = clamp(0.8 - penalties, 0.0, 1.0)
 ```
 
-The agent observes **five real-time signals** (channel, risk score, Kafka consumer lag, API latency, and rolling P99 SLA) and must simultaneously output **three coordinated decisions** — creating a rich multi-objective optimization surface that cannot be solved by static rules.
+### Reward Table
 
----
-
-## 🏗️ Environment Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     UnifiedFintechEnv                           │
-│                                                                 │
-│  ┌───────────────────┐     ┌──────────────────────────────┐    │
-│  │  Synthetic Data   │     │        step() Engine          │    │
-│  │     Engine        │     │                               │    │
-│  │                   │     │  ① Risk Decision Reward       │    │
-│  │  80% Normal       │────▶│  ② Crypto Verify Cost/Gate    │    │
-│  │  10% Flash Sale   │     │  ③ Infra Routing & CB         │    │
-│  │  10% Botnet       │     │  ④ SLA Penalty                │    │
-│  │                   │     │  ⑤ Crash Penalty              │    │
-│  └───────────────────┘     └──────────────────────────────┘    │
-│                                                                 │
-│  Observation: Box(5,) float32    Action: MultiDiscrete([3,3,2]) │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🎮 Action Space — The Three Simultaneous Decisions
-
-`spaces.MultiDiscrete([3, 3, 2])` — 18 unique action combinations per tick.
-
-### Risk Decision (Action 0)
-
-| Index | Action | Description |
-|:---:|---|---|
-| `0` | **APPROVE** | Clear the transaction immediately |
-| `1` | **REJECT** | Block the transaction outright |
-| `2` | **CHALLENGE** | Trigger a PIN re-prompt / step-up authentication |
-
-### Infrastructure Routing (Action 1)
-
-| Index | Action | Description |
-|:---:|---|---|
-| `0` | **ROUTE NORMAL** | Standard pipeline — adds baseline load |
-| `1` | **THROTTLE** | Shed excess traffic — reduces lag but drops good transactions |
-| `2` | **CIRCUIT BREAKER** | Nuclear option — instantly zeros lag/latency, massive cost |
-
-### Cryptographic Verification (Action 2)
-
-| Index | Action | Description |
-|:---:|---|---|
-| `0` | **FULL VERIFY** | Complete cryptographic validation — adds latency |
-| `1` | **SKIP VERIFY** | Fast path — saves latency, but risks undetected fraud |
-
----
-
-## 📡 Observation Space — Five Real-Time Signals
-
-`spaces.Box(shape=(5,), dtype=np.float32)`
-
-| Index | Signal | Range | Unit |
-|:---:|---|---|---|
-| `0` | **Channel** | `[0, 2]` | Encoded payment channel ID |
-| `1` | **Risk Score** | `[0.0, 100.0]` | Transaction risk signal |
-| `2` | **Kafka Lag** | `[0, 10000]` | Consumer group message backlog |
-| `3` | **API Latency** | `[0.0, 5000.0]` | End-to-end latency (ms) |
-| `4` | **Rolling P99 SLA** | `[0.0, 5000.0]` | EMA-smoothed P99 latency (ms) |
-
----
-
-## 🎲 The Synthetic Data Engine
-
-The environment generates probabilistic transaction events to simulate realistic production chaos:
-
-| Event | Probability | Risk Score | Kafka Lag | API Latency | Real-World Analogue |
-|---|:---:|---|---|---|---|
-| **Normal Traffic** | 80% | 5 – 30 | 0 – 500 | 50 – 300 ms | Standard UPI flow |
-| **Flash Sale** | 10% | 0 – 10 | 3,000 – 8,000 | 800 – 3,000 ms | Flipkart Big Billion Day |
-| **Botnet Attack** | 10% | 85 – 100 | 500 – 3,000 | 300 – 1,500 ms | Distributed credential stuffing |
-
-The agent's infrastructure actions (Throttle, Circuit Breaker) **directly mutate the internal EMA accumulators** (`_rolling_lag`, `_rolling_latency`), meaning each decision organically shapes the baseline state of the *next* transaction. The agent's past choices haunt its future.
-
----
-
-## ⚖️ Mathematical Trade-offs & Anti–Reward Hacking
-
-The reward function is engineered to create **genuine dilemmas** — no single degenerate policy dominates:
-
-### Risk vs. Fraud
-
-| Scenario | Approve | Reject | Challenge |
-|---|:---:|:---:|:---:|
-| **High Risk** (>80) | **-150** 🔴 | +30 | +15 |
-| **Low Risk** (≤80) | +10 | **-20** 🔴 | -5 |
-
-### The Catastrophic Fraud Gate
-
-> **Skip Verify + Approve + High Risk = -200 instant penalty**
->
-> The agent cannot shortcut cryptographic verification on suspicious transactions. Cutting corners on security has an immediate, devastating cost.
-
-### Infrastructure Survival
-
-| Condition | Penalty | Consequence |
+| Condition | Penalty | Rationale |
 |---|:---:|---|
-| Rolling P99 > 800ms | **-20/tick** | SLA degradation — slow bleed |
-| Kafka Lag > 4,000 | **-500 + episode termination** | System crash — catastrophic |
-| Circuit Breaker | **-100/tick** | Expensive rescue — last resort |
-| Throttle | **-10/tick** | Moderate cost — sheds legitimate traffic |
+| **Baseline** (successful step) | `+0.8` | Standard transaction processed |
+| **Throttle** (Infra=1) | `-0.2` | Dropping legitimate user traffic |
+| **SLA Breach** (P99 > 800ms) | `-0.3` | Merchant churn from latency |
+| **Circuit Breaker** (Infra=2) | `-0.5` | Nuclear option — gateway halted |
+| **Catastrophic Fraud** (Skip+Approve+HighRisk) | `-1.0` | Complete security failure |
+| **System Crash** (lag > 4000) | → `0.0` | Forced to zero — system is down |
 
-### Why Degenerate Strategies Fail
+### Why Normalized Rewards Matter
 
-A comprehensive **Red Team audit** (500 episodes × 9 strategies) verified that exploitative policies are defeated:
+1. **LLM Compatibility** — Models like Qwen-72B understand "0.80 is good, 0.00 is terrible" intuitively from their training data.
+2. **Cross-Task Comparability** — A score of 0.6 on `hard` is genuinely harder to achieve than 0.8 on `easy`. Judges can compare across tasks.
+3. **No Negative Spiral** — The agent never sees `-500`; it sees `0.0` and knows to change strategy. This prevents reward-scale confusion in GRPO/PPO training loops.
 
-| Degenerate Strategy | Mean Reward | Why It Fails |
-|---|:---:|---|
-| CB Spam (avoid SLA penalties) | **-87,990** | -100/tick × 1000 steps destroys any risk gain |
-| Reject Everything | **-681** | Crashes in ~12 steps from unmanaged Flash Sale lag |
-| Approve Everything | **-818** | Fraud penalties from botnet transactions |
-| Full Verify Everything | **-8,096** | Latency inflation → permanent SLA breach |
+### Anti–Reward Hacking
 
----
+Every degenerate shortcut is defeated:
 
-## 🐳 Quickstart — Docker
-
-Build and run the validation suite in a single command:
-
-```bash
-# Build the container
-docker build -t ufrg .
-
-# Run the Gymnasium API check + 10,000-step stress test
-docker run --rm ufrg
-```
-
-**Expected output:**
-
-```
-Running Gymnasium API check ...
-Gymnasium API Check Passed
-
-Starting stress test (10,000 total steps) ...
-Total steps   processed : 10,000
-Total episode resets    : 530
-Total crash events      : 530
-
-Environment is completely stable under random stress — Stress Test Passed
-```
+| Exploit Attempt | Result |
+|---|---|
+| Spam CircuitBreaker (avoid SLA penalties) | `0.8 - 0.5 = 0.3` per step — guaranteed low score |
+| Approve + Skip everything (maximize throughput) | Works on `easy`, catastrophic on `hard` (fraud gate = `0.0`) |
+| Reject everything (never trigger fraud) | Baseline `0.8` minus throttle pressure — moderate but not optimal |
+| Let system crash immediately | `0.0` reward + episode ends in ~5 steps — worst possible outcome |
 
 ---
 
-## 💻 Quickstart — Local
+## 📦 Typed Data Models — The OpenEnv Contract
+
+All communication between agent and environment uses **Pydantic v2 models** with compile-time validation:
+
+```python
+from pydantic import BaseModel, Field
+
+class UFRGAction(BaseModel):
+    risk_decision: int = Field(ge=0, le=2)   # 0=Approve 1=Reject 2=Challenge
+    infra_routing: int = Field(ge=0, le=2)   # 0=Normal 1=Throttle 2=CircuitBreaker
+    crypto_verify: int = Field(ge=0, le=1)   # 0=FullVerify 1=SkipVerify
+
+class UFRGObservation(BaseModel):
+    channel:      float    # 0=P2P, 1=P2M, 2=AutoPay
+    risk_score:   float    # [0, 100]
+    kafka_lag:    float    # [0, 10000]
+    api_latency:  float    # [0, 5000]
+    rolling_p99:  float    # [0, 5000]
+```
+
+Out-of-range actions are **rejected at construction time** — the environment never sees invalid input.
+
+---
+
+## 🚀 Setup & Quickstart
+
+### Prerequisites
+
+- Python 3.10+
+- Docker (optional, for containerised runs)
+
+### Local Setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/umeshmaurya1301/unified-fintech-risk-gateway.git
 cd unified-fintech-risk-gateway
 
-# Create and activate virtual environment
+# Create virtual environment
 python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS / Linux
+venv\Scripts\activate          # Windows
+# source venv/bin/activate     # macOS / Linux
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -e .
+# Or: pip install gymnasium numpy pydantic openai
+```
+
+### Docker Build & Run
+
+```bash
+# Build the container
+docker build -t ufrg .
 
 # Run the validation suite
-python dummy_test.py
+docker run --rm ufrg
 ```
 
-**Integrate with your own RL training loop:**
+### Validate with OpenEnv CLI
 
-```python
-from unified_gateway import UnifiedFintechEnv
-
-env = UnifiedFintechEnv()
-obs, info = env.reset(seed=42)
-
-for _ in range(1000):
-    action = env.action_space.sample()  # Replace with your agent
-    obs, reward, terminated, truncated, info = env.step(action)
-
-    if terminated:
-        obs, info = env.reset()
+```bash
+pip install openenv-core
+openenv validate .
 ```
+
+Expected output:
+```
+✅ openenv.yaml found
+✅ entry_point resolved: unified_gateway:UnifiedFintechEnv
+✅ tasks: easy, medium, hard
+✅ Observation/Action types validated
+✅ Environment passed all checks
+```
+
+---
+
+## 🤖 Inference Script
+
+The `inference.py` script is the **OpenEnv-compliant agent evaluator**. It drives the environment through all three tasks using either:
+
+- **An LLM agent** (via any OpenAI-compatible API — HuggingFace, OpenAI, local vLLM)
+- **A dry-run heuristic** (for local testing without API costs)
+
+### Run in Dry-Run Mode (no API key needed)
+
+```bash
+DRY_RUN=true python inference.py           # Linux/macOS
+$env:DRY_RUN="true"; python inference.py   # PowerShell
+```
+
+### Run with a Live LLM
+
+```bash
+export HF_TOKEN="hf_your_token_here"
+export MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
+export API_BASE_URL="https://router.huggingface.co/v1"
+python inference.py
+```
+
+### Output Format (OpenEnv Strict Logging)
+
+The script emits **exactly** three marker types per task — no stray output:
+
+```
+[START] task=easy env=ufrg model=Qwen/Qwen2.5-72B-Instruct
+[STEP] step=1 action={"risk_decision":0,"infra_routing":0,"crypto_verify":1} reward=0.80 done=false error=null
+[STEP] step=2 action={"risk_decision":0,"infra_routing":0,"crypto_verify":1} reward=0.80 done=false error=null
+...
+[END] success=true steps=100 score=0.800 rewards=0.80,0.80,...
+```
+
+### Dry-Run Benchmark Scores
+
+| Task | Score | Agent Strategy |
+|---|---|---|
+| `easy` | **0.800** | Approve + SkipVerify (max throughput) |
+| `medium` | **0.440** | Throttle during flash-sale spikes |
+| `hard` | **0.343** | Reject high-risk + manage SLA bleed |
 
 ---
 
@@ -277,35 +301,70 @@ for _ in range(1000):
 
 ```
 unified-fintech-risk-gateway/
-├── unified_gateway.py    # Core Gymnasium environment (UnifiedFintechEnv)
-├── dummy_test.py         # API validation + 10,000-step stress test
-├── requirements.txt      # gymnasium==0.29.1, numpy==1.26.4
-├── Dockerfile            # Production container (python:3.10-slim)
-├── .gitignore
-└── README.md
+├── openenv.yaml          # OpenEnv manifest — tasks, spaces, entry_point
+├── pyproject.toml        # Package metadata & dependencies
+├── unified_gateway.py    # Core environment: models, reset, step, state
+├── inference.py          # OpenAI-compatible LLM inference agent
+├── server/
+│   └── app.py            # FastAPI server for remote evaluation
+├── Dockerfile            # Container for validation & deployment
+├── requirements.txt      # Minimal deps (gymnasium, numpy)
+├── dummy_test.py         # Legacy Gymnasium stress test
+├── verify_foundation.py  # Phase 2+3 Pydantic model tests
+├── verify_step.py        # Phase 4 reward/crash/done tests
+└── README.md             # This file
 ```
 
 ---
 
-## 🔴 Red Team Audit Summary
+## 🏗️ Architecture Diagram
 
-A full adversarial audit was conducted using 500 episodes across 9 fixed-policy strategies. Key findings:
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                      UnifiedFintechEnv                               │
+│                                                                      │
+│  ┌─────────────────────┐      ┌────────────────────────────────┐    │
+│  │  Task-Driven         │      │         step() Engine           │    │
+│  │  Synthetic Data      │      │                                 │    │
+│  │  Engine              │      │  ① Crypto → mutate lag/latency  │    │
+│  │                      │      │  ② Infra  → mutate lag/latency  │    │
+│  │  easy:   Normal 100% │─────▶│  ③ Reward → 0.8 - penalties    │    │
+│  │  medium: Flash  20%  │      │  ④ Crash  → lag>4000 = done     │    │
+│  │  hard:   Botnet 100% │      │  ⑤ Clip   → [0.0, 1.0]         │    │
+│  └─────────────────────┘      └────────────────────────────────┘    │
+│                                                                      │
+│  UFRGObservation (Pydantic)          UFRGAction (Pydantic)           │
+│  ├─ channel        [0, 2]           ├─ risk_decision  {0,1,2}       │
+│  ├─ risk_score     [0, 100]         ├─ infra_routing  {0,1,2}       │
+│  ├─ kafka_lag      [0, 10000]       └─ crypto_verify  {0,1}         │
+│  ├─ api_latency    [0, 5000]                                         │
+│  └─ rolling_p99    [0, 5000]        Reward: float ∈ [0.0, 1.0]      │
+└──────────────────────────────────────────────────────────────────────┘
 
-| Finding | Severity | Status |
-|---|---|---|
-| Circuit Breaker is correctly priced at -100 (not exploitable via spam) | ✅ Secure | No patch needed |
-| Crash penalty (-500) correctly forces proactive infra management | ✅ Secure | No patch needed |
-| Flash Sale events create genuine crash pressure (~8% per tick) | ✅ Working as designed | No patch needed |
-| SLA penalty creates sustained time-pressure on latency management | ✅ Working as designed | No patch needed |
-
-The environment successfully defeats all tested reward-hacking strategies while maintaining a rich, learnable optimization surface for legitimate RL agents.
+        ▲ reset(task_name)                     │ step(UFRGAction)
+        │                                      ▼
+┌───────┴──────────────────────────────────────────────────────────────┐
+│                          inference.py                                 │
+│                                                                      │
+│  ┌──────────────┐    ┌──────────────────┐    ┌───────────────────┐  │
+│  │  Observation  │───▶│  LLM / Heuristic │───▶│  UFRGAction       │  │
+│  │  → prompt     │    │  (OpenAI client)  │    │  (Pydantic)       │  │
+│  └──────────────┘    └──────────────────┘    └───────────────────┘  │
+│                                                                      │
+│  [START] task=easy env=ufrg model=Qwen/Qwen2.5-72B-Instruct        │
+│  [STEP]  step=1 action={...} reward=0.80 done=false error=null      │
+│  [END]   success=true steps=100 score=0.800 rewards=0.80,0.80,...   │
+└──────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 <div align="center">
 
-_Built with ❤️ for the Meta PyTorch OpenEnv Hackathon_
+_Built with ❤️ for the Meta OpenEnv Hackathon_
 
-**Gymnasium** · **NumPy** · **Docker** · **Reinforcement Learning**
+**OpenEnv** · **Pydantic v2** · **Gymnasium** · **FastAPI** · **Docker**
+
+`openenv validate` ✅ · Typed models · Three difficulty tiers · Normalized [0,1] rewards
 
 </div>
