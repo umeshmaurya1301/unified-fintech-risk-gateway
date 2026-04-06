@@ -178,137 +178,181 @@ class UnifiedFintechEnv(gym.Env):
         )
 
     # ------------------------------------------------------------------
-    # reset — Gymnasium API
+    # reset — OpenEnv API  (task-driven, returns UFRGObservation)
     # ------------------------------------------------------------------
-    def reset(
-        self,
-        *,
-        seed: int | None = None,
-        options: dict[str, Any] | None = None,
-    ) -> tuple[np.ndarray, dict[str, Any]]:
+    def reset(self, task_name: str = "easy") -> UFRGObservation:
         """
-        Reset the environment to an initial state and return the first
-        observation together with an empty info dict.
+        Reset the environment for a new episode under the given task.
 
-        Calling ``super().reset(seed=seed)`` seeds ``self.np_random`` so
-        that all subsequent calls to ``_generate_transaction`` are
-        reproducible when a seed is supplied.
+        OpenEnv rubric requires three difficulty tiers:
+          - ``"easy"``   → 100 % normal traffic (baseline SRE scenario)
+          - ``"medium"`` → 80/20 normal + flash-sale volume spikes
+          - ``"hard"``   → sustained botnet storm with extreme risk scores
+
+        Parameters
+        ----------
+        task_name : str, default ``"easy"``
+            One of ``{"easy", "medium", "hard"}``.
 
         Returns
         -------
-        observation : np.ndarray, shape (5,), dtype float32
-            The initial observation produced by the Synthetic Data Engine.
-        info : dict
-            Empty auxiliary info dict (Gymnasium API requirement).
+        UFRGObservation
+            The initial typed observation for the episode.
+            (OpenEnv spec: returns the observation directly — not a tuple.)
         """
-        # Seed self.np_random via the Gymnasium base class.
-        super().reset(seed=seed)
+        # Seed the Gymnasium PRNG so _generate_transaction is reproducible
+        super().reset(seed=None)
 
-        # ---- Episode counters ----------------------------------------
+        # ---- Store the active task for use in step() and generate ------
+        self.current_task: str = task_name
+
+        # ---- Episode counters ------------------------------------------
         self.current_step: int = 0
 
-        # ---- Rolling-window accumulators (used by step() later) -------
-        # These track an exponential moving average of Kafka Lag and API
-        # Latency across steps, giving the agent a smoothed P99 signal.
+        # ---- Rolling-window EMA accumulators — reset to safe baselines -
         self._rolling_lag: float = 0.0
-        self._rolling_latency: float = 0.0
+        self._rolling_latency: float = 50.0
 
         # ---- Generate the first transaction observation ----------------
-        self.state: np.ndarray = self._generate_transaction()
+        self._current_obs: UFRGObservation = self._generate_transaction(
+            self.current_task,
+        )
 
-        return self.state, {}
+        return self._current_obs
 
     # ------------------------------------------------------------------
-    # _generate_transaction — Synthetic Data Engine
+    # state — OpenEnv API
     # ------------------------------------------------------------------
-    def _generate_transaction(self) -> np.ndarray:
+    def state(self) -> UFRGObservation:
         """
-        Produce a single synthetic transaction observation vector.
+        Return the current observation without advancing the clock.
 
-        Event distribution
-        ------------------
-        - 80 % → **Normal Traffic**   low risk, stable infra
-        - 10 % → **Flash Sale**        very low risk, heavy Kafka & latency spike
-        - 10 % → **Botnet Attack**     extreme risk, moderate infra stress
-
-        All outputs are clipped to the declared ``observation_space`` bounds
-        and cast to ``np.float32``.
+        This satisfies the OpenEnv ``state()`` contract: an agent (or
+        evaluation harness) can inspect what the environment looks like
+        right now without triggering any side-effects.
 
         Returns
         -------
-        obs : np.ndarray, shape (5,), dtype float32
-            [channel, risk_score, kafka_lag, api_latency, rolling_p99_sla]
+        UFRGObservation
+            The most-recent observation produced by ``reset`` or ``step``.
+        """
+        return self._current_obs
+
+    # ------------------------------------------------------------------
+    # _generate_transaction — Task-Driven Synthetic Data Engine
+    # ------------------------------------------------------------------
+    def _generate_transaction(self, task_name: str) -> UFRGObservation:
+        """
+        Produce a single synthetic transaction observation vector whose
+        distribution is controlled entirely by ``task_name``.
+
+        Task profiles
+        -------------
+        ``"easy"``   — **Normal Traffic** (100 %)
+            Low risk (5–30), infrastructure near baseline with minor jitter.
+            The agent only needs basic approve/reject awareness.
+
+        ``"medium"`` — **Flash Sale Mix** (80 % normal / 20 % volume spike)
+            Risk stays very low (0–10) during spikes, but Kafka lag surges
+            (+500–1 000 on the EMA) and latency degrades (+100–300).
+            The agent must learn when to throttle without blocking users.
+
+        ``"hard"``   — **Botnet Storm** (sustained)
+            Risk scores frequently hit 85–100.  Lag and latency climb
+            steadily from attack volume.  The agent must balance
+            reject/challenge accuracy against crypto-gate and SLA costs.
+
+        All outputs are clipped to the declared ``observation_space`` bounds
+        and returned as a validated ``UFRGObservation``.
+
+        Parameters
+        ----------
+        task_name : str
+            One of ``{"easy", "medium", "hard"}``.
+
+        Returns
+        -------
+        UFRGObservation
         """
         rng = self.np_random  # gymnasium-seeded Generator
 
-        # ---- Event trigger (draw a single uniform float) ---------------
-        roll: float = rng.uniform(0.0, 1.0)
+        # ---- Channel (common to every profile) -------------------------
+        channel: float = float(rng.integers(0, 3))  # {0, 1, 2}
 
-        if roll < 0.80:
-            # ==============================================================
-            # NORMAL TRAFFIC — 80 %
-            # Low risk, stable and low infrastructure load.
-            # ==============================================================
-            channel      = float(rng.integers(0, 3))          # {0, 1, 2}
-            risk_score   = rng.uniform(5.0, 30.0)
-            kafka_lag    = rng.uniform(0.0, 500.0)
-            api_latency  = rng.uniform(50.0, 300.0)
-            p99_sla      = rng.uniform(80.0, 400.0)
-            event_type   = "normal"
+        # ================================================================
+        # EASY — 100 % Normal Traffic
+        # ================================================================
+        if task_name == "easy":
+            risk_score  = rng.uniform(5.0, 30.0)
+            kafka_lag   = max(0.0, self._rolling_lag   + rng.uniform(-50.0, 50.0))
+            api_latency = max(10.0, self._rolling_latency + rng.uniform(-30.0, 30.0))
+            event_type  = "normal"
 
-        elif roll < 0.90:
-            # ==============================================================
-            # FLASH SALE — 10 %
-            # Massive transaction volume; risk is very low (legitimate users)
-            # but Kafka consumer lag spikes heavily and API latency degrades.
-            # ==============================================================
-            channel      = float(rng.integers(0, 3))
-            risk_score   = rng.uniform(0.0, 10.0)
-            kafka_lag    = rng.uniform(3000.0, 8000.0)
-            api_latency  = rng.uniform(800.0, 3000.0)
-            p99_sla      = rng.uniform(1200.0, 4000.0)
-            event_type   = "flash_sale"
+        # ================================================================
+        # MEDIUM — 80 % Normal / 20 % Flash-Sale Volume Spike
+        # ================================================================
+        elif task_name == "medium":
+            roll: float = rng.uniform(0.0, 1.0)
+
+            if roll < 0.80:
+                # --- Normal portion (identical to easy) -----------------
+                risk_score  = rng.uniform(5.0, 30.0)
+                kafka_lag   = max(0.0, self._rolling_lag + rng.uniform(-50.0, 50.0))
+                api_latency = max(10.0, self._rolling_latency + rng.uniform(-30.0, 30.0))
+                event_type  = "normal"
+            else:
+                # --- Flash-sale spike -----------------------------------
+                risk_score  = rng.uniform(0.0, 10.0)
+                # Massive lag/latency surge on the accumulators
+                self._rolling_lag     += rng.uniform(500.0, 1000.0)
+                self._rolling_latency += rng.uniform(100.0, 300.0)
+                kafka_lag   = self._rolling_lag   + rng.uniform(0.0, 200.0)
+                api_latency = self._rolling_latency + rng.uniform(0.0, 100.0)
+                event_type  = "flash_sale"
+
+        # ================================================================
+        # HARD — Sustained Botnet Storm
+        # ================================================================
+        elif task_name == "hard":
+            risk_score  = rng.uniform(85.0, 100.0)
+            # Attack volume steadily inflates accumulators each tick
+            self._rolling_lag     += rng.uniform(100.0, 400.0)
+            self._rolling_latency += rng.uniform(50.0, 150.0)
+            kafka_lag   = self._rolling_lag   + rng.uniform(0.0, 300.0)
+            api_latency = self._rolling_latency + rng.uniform(0.0, 200.0)
+            event_type  = "botnet_attack"
 
         else:
-            # ==============================================================
-            # BOTNET ATTACK — 10 %
-            # Extreme risk signal; infra is stressed but deliberately does
-            # NOT max out (attackers throttle to avoid detection).
-            # ==============================================================
-            channel      = float(rng.integers(0, 3))
-            risk_score   = rng.uniform(85.0, 100.0)
-            kafka_lag    = rng.uniform(500.0, 3000.0)
-            api_latency  = rng.uniform(300.0, 1500.0)
-            p99_sla      = rng.uniform(500.0, 2000.0)
-            event_type   = "botnet_attack"
+            raise ValueError(
+                f"Unknown task_name {task_name!r}; expected 'easy', "
+                f"'medium', or 'hard'."
+            )
 
         # ---- Update rolling accumulators (EMA, α = 0.2) ----------------
-        # Smooths out per-step noise so the agent sees a stable P99 trend.
         alpha: float = 0.2
-        self._rolling_lag     = alpha * kafka_lag   + (1.0 - alpha) * self._rolling_lag
+        self._rolling_lag     = alpha * kafka_lag + (1.0 - alpha) * self._rolling_lag
         self._rolling_latency = alpha * api_latency + (1.0 - alpha) * self._rolling_latency
 
-        # Use the EMA latency as the Rolling P99 SLA observation so that
-        # the agent gets a smoothed signal rather than a raw point sample.
-        # Clamp to the declared SLA high bound just in case.
-        smoothed_p99 = min(self._rolling_latency, 5000.0)
+        # Smoothed P99 = EMA latency, clamped to obs-space high bound
+        smoothed_p99: float = min(self._rolling_latency, 5000.0)
 
-        # ---- Build & clip the observation vector -----------------------
-        obs = np.array(
-            [channel, risk_score, kafka_lag, api_latency, smoothed_p99],
-            dtype=np.float32,
-        )
-        obs = np.clip(
-            obs,
-            self.observation_space.low,
-            self.observation_space.high,
-        ).astype(np.float32)
+        # ---- Clip raw values to observation-space bounds ---------------
+        kafka_lag   = float(np.clip(kafka_lag,   0.0, 10000.0))
+        api_latency = float(np.clip(api_latency, 0.0,  5000.0))
+        risk_score  = float(np.clip(risk_score,  0.0,   100.0))
+        channel     = float(np.clip(channel,     0.0,     2.0))
 
-        # Attach event metadata to the instance so step() can read it
-        # for reward shaping without re-exposing it in the obs vector.
+        # ---- Store event metadata for step() reward shaping ------------
         self._last_event_type: str = event_type
 
-        return obs
+        # ---- Return a typed, validated observation ----------------------
+        return UFRGObservation(
+            channel=channel,
+            risk_score=risk_score,
+            kafka_lag=kafka_lag,
+            api_latency=api_latency,
+            rolling_p99=smoothed_p99,
+        )
 
     # ------------------------------------------------------------------
     # step — Gymnasium API
@@ -351,11 +395,12 @@ class UnifiedFintechEnv(gym.Env):
         crypto_verify: int = int(action[2])  # 0=FULL_VERIFY  1=SKIP_VERIFY
 
         # ------------------------------------------------------------------
-        # Unpack current observation
+        # Unpack current observation (from typed Pydantic model)
         # ------------------------------------------------------------------
-        _channel, risk_score, kafka_lag, _api_latency, rolling_p99 = (
-            float(v) for v in self.state
-        )
+        obs = self._current_obs
+        risk_score:  float = obs.risk_score
+        kafka_lag:   float = obs.kafka_lag
+        rolling_p99: float = obs.rolling_p99
 
         # ------------------------------------------------------------------
         # Reward accumulators & flags
@@ -460,7 +505,7 @@ class UnifiedFintechEnv(gym.Env):
 
         # Produce the next observation; the mutated EMA accumulators carry
         # the agent's infra decisions forward into the next transaction.
-        self.state = self._generate_transaction()
+        self._current_obs = self._generate_transaction(self.current_task)
 
         # Max-steps termination (folded into terminated per spec)
         if self.current_step >= self.max_steps:
@@ -496,4 +541,4 @@ class UnifiedFintechEnv(gym.Env):
             "internal_rolling_latency":self._rolling_latency,
         }
 
-        return self.state, float(total_reward), terminated, False, info
+        return self._current_obs, float(total_reward), terminated, False, info
