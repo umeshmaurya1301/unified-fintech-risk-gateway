@@ -1,0 +1,34 @@
+version: "1.0"
+name: "unified-fintech-risk-gateway"
+version_env: "0.1.0"
+description: "SRE/DevOps Gateway Orchestrator for UPI architectures."
+
+# This tells the validator where your Gym class is
+entry_point: "unified_gateway:UnifiedFintechEnv"
+
+# Definitions for the automated graders
+tasks:
+  - id: "easy"
+    name: "Normal Traffic"
+    description: "Standard UPI routing with low risk."
+  - id: "medium"
+    name: "Flash Sale"
+    description: "Handle massive volume spikes and Kafka lag."
+  - id: "hard"
+    name: "Botnet Storm"
+    description: "Mitigate high-risk attacks while maintaining system health."
+
+# The Observation space definition
+observation_space:
+  type: "dict"
+  fields:
+    channel: { type: "float", min: 0, max: 2 }
+    risk_score: { type: "float", min: 0, max: 100 }
+    kafka_lag: { type: "float", min: 0, max: 10000 }
+    api_latency: { type: "float", min: 0, max: 5000 }
+    rolling_p99: { type: "float", min: 0, max: 5000 }
+
+# The Action space definition
+action_space:
+  type: "multidiscrete"
+  dimensions: [3, 3, 2]
