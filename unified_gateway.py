@@ -21,6 +21,85 @@ from typing import Any
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
+from pydantic import BaseModel, Field
+
+
+# ---------------------------------------------------------------------------
+# OpenEnv Data Models  (Pydantic — typed contract between agent and gateway)
+# ---------------------------------------------------------------------------
+
+class UFRGAction(BaseModel):
+    """
+    Typed representation of the three simultaneous control decisions.
+
+    All fields are validated on construction; out-of-range integers are
+    rejected before they can reach the environment step logic.
+    """
+
+    risk_decision: int = Field(
+        ge=0, le=2,
+        description="Risk disposition: 0=Approve, 1=Reject, 2=Challenge (PIN reprompt)",
+    )
+    infra_routing: int = Field(
+        ge=0, le=2,
+        description="Infrastructure tier: 0=Normal, 1=Throttle, 2=CircuitBreaker",
+    )
+    crypto_verify: int = Field(
+        ge=0, le=1,
+        description="Crypto gate: 0=FullVerify (slow), 1=SkipVerify (fast)",
+    )
+
+
+class UFRGObservation(BaseModel):
+    """
+    Typed representation of the five real-time signals observed per step.
+
+    Fields mirror the five columns of the Box(5,) observation space so that
+    any serialized observation can be round-tripped through this model.
+    """
+
+    channel: float = Field(
+        ...,
+        description="Encoded payment channel: 0=P2P, 1=P2M, 2=AutoPay",
+    )
+    risk_score: float = Field(
+        ...,
+        description="Normalized fraud risk signal [0.0, 100.0]",
+    )
+    kafka_lag: float = Field(
+        ...,
+        description="Current UPI consumer-group message lag [0, 10 000]",
+    )
+    api_latency: float = Field(
+        ...,
+        description="Downstream bank API end-to-end latency in ms [0.0, 5 000.0]",
+    )
+    rolling_p99: float = Field(
+        ...,
+        description="Exponentially smoothed P99 SLA latency in ms [0.0, 5 000.0]",
+    )
+
+    @classmethod
+    def from_array(cls, obs: np.ndarray) -> "UFRGObservation":
+        """Construct an UFRGObservation from a raw numpy observation vector."""
+        return cls(
+            channel=float(obs[0]),
+            risk_score=float(obs[1]),
+            kafka_lag=float(obs[2]),
+            api_latency=float(obs[3]),
+            rolling_p99=float(obs[4]),
+        )
+
+    def to_array(self) -> np.ndarray:
+        """Serialize back to a float32 numpy vector for Gymnasium compatibility."""
+        return np.array(
+            [self.channel, self.risk_score, self.kafka_lag,
+             self.api_latency, self.rolling_p99],
+            dtype=np.float32,
+        )
+
+
+# ---------------------------------------------------------------------------
 
 
 class UnifiedFintechEnv(gym.Env):
@@ -48,17 +127,28 @@ class UnifiedFintechEnv(gym.Env):
         # ------------------------------------------------------------------
         # Episode configuration
         # ------------------------------------------------------------------
-        self.max_steps: int = 1000
+        self.max_steps: int = 100
+
+        # ------------------------------------------------------------------
+        # Internal EMA accumulators — baselines reset again inside reset().
+        # Declared here so they exist for any code that inspects the env
+        # before the first reset() call.
+        # ------------------------------------------------------------------
+        self._rolling_lag: float = 0.0
+        self._rolling_latency: float = 50.0
+
+        # Public step counter (OpenEnv convention: exposed without underscore)
+        self.current_step: int = 0
 
         # ------------------------------------------------------------------
         # Observation space — Box(5,) dtype=float32
         #
-        # Columns (in order):
-        #   0  Channel          integer-coded channel id    [0,      2     ]
-        #   1  Risk Score       raw risk signal             [0.0,  100.0   ]
-        #   2  Kafka Lag        consumer-group message lag  [0,    10 000  ]
-        #   3  API Latency      end-to-end latency (ms)     [0.0,  5 000.0 ]
-        #   4  Rolling P99 SLA  P99 latency bucket (ms)     [0.0,  5 000.0 ]
+        # Mirrors the fields of UFRGObservation (in declaration order):
+        #   0  channel          integer-coded channel id    [0,      2     ]
+        #   1  risk_score       raw risk signal             [0.0,  100.0   ]
+        #   2  kafka_lag        consumer-group message lag  [0,    10 000  ]
+        #   3  api_latency      end-to-end latency (ms)     [0.0,  5 000.0 ]
+        #   4  rolling_p99      EMA P99 SLA (ms)            [0.0,  5 000.0 ]
         # ------------------------------------------------------------------
         obs_low = np.array(
             [0.0,    0.0,     0.0,    0.0,    0.0],
@@ -78,17 +168,14 @@ class UnifiedFintechEnv(gym.Env):
         # ------------------------------------------------------------------
         # Action space — MultiDiscrete([3, 3, 2])
         #
-        # Dimensions (in order):
-        #   0  Risk Decision   {0: APPROVE, 1: REJECT, 2: CHALLENGE (PIN reprompt)}
-        #   1  Infra Routing   {0: ROUTE_NORMAL, 1: THROTTLE, 2: CIRCUIT_BREAKER}
-        #   2  Crypto Verify   {0: FULL_VERIFY (slow), 1: SKIP_VERIFY (fast)}
+        # Mirrors the fields of UFRGAction (in declaration order):
+        #   0  risk_decision   {0: APPROVE, 1: REJECT, 2: CHALLENGE}
+        #   1  infra_routing   {0: ROUTE_NORMAL, 1: THROTTLE, 2: CIRCUIT_BREAKER}
+        #   2  crypto_verify   {0: FULL_VERIFY, 1: SKIP_VERIFY}
         # ------------------------------------------------------------------
         self.action_space = spaces.MultiDiscrete(
             nvec=np.array([3, 3, 2], dtype=np.int64),
         )
-
-        # Internal step counter — incremented in step(), reset in reset()
-        self._current_step: int = 0
 
     # ------------------------------------------------------------------
     # reset — Gymnasium API
@@ -118,7 +205,7 @@ class UnifiedFintechEnv(gym.Env):
         super().reset(seed=seed)
 
         # ---- Episode counters ----------------------------------------
-        self._current_step: int = 0
+        self.current_step: int = 0
 
         # ---- Rolling-window accumulators (used by step() later) -------
         # These track an exponential moving average of Kafka Lag and API
@@ -369,14 +456,14 @@ class UnifiedFintechEnv(gym.Env):
         # ------------------------------------------------------------------
         # Advance episode
         # ------------------------------------------------------------------
-        self._current_step += 1
+        self.current_step += 1
 
         # Produce the next observation; the mutated EMA accumulators carry
         # the agent's infra decisions forward into the next transaction.
         self.state = self._generate_transaction()
 
         # Max-steps termination (folded into terminated per spec)
-        if self._current_step >= self.max_steps:
+        if self.current_step >= self.max_steps:
             terminated = True
 
         # ------------------------------------------------------------------
@@ -384,7 +471,7 @@ class UnifiedFintechEnv(gym.Env):
         # ------------------------------------------------------------------
         info: dict[str, Any] = {
             # Episode progress
-            "step":                    self._current_step,
+            "step":                    self.current_step,
             "event_type":              self._last_event_type,
             # Observation snapshot that drove the decisions this tick
             "obs_risk_score":          risk_score,
