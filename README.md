@@ -1,3 +1,13 @@
+---
+title: Unified Fintech Risk Gateway
+emoji: 🛡️
+colorFrom: indigo
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 <div align="center">
 
 # 🛡️ Unified Fintech Risk Gateway
