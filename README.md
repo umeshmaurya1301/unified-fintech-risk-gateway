@@ -187,7 +187,8 @@ Every degenerate shortcut is defeated:
 |---|---|
 | Spam CircuitBreaker (avoid SLA penalties) | `0.8 - 0.5 = 0.3` per step — guaranteed low score |
 | Approve + Skip everything (maximize throughput) | Works on `easy`, catastrophic on `hard` (fraud gate = `0.0`) |
-| Reject everything with Normal routing | Earns `0.8` baseline but Kafka lag grows +100/step unchecked — system crashes within ~30 steps |
+| Reject everything (`risk_decision=1`) + Normal routing (`infra_routing=0`) + SkipVerify | No throttle penalty (`risk_decision=Reject` does NOT trigger throttle — only `infra_routing=Throttle` does). Earns `0.8` per step, but `infra_routing=Normal` grows lag +100/step → crash within ≈ 40 steps. |
+| Reject everything (`risk_decision=1`) + Normal routing (`infra_routing=0`) + FullVerify | No throttle penalty for same reason. However, `FullVerify` adds `+150` to latency and `infra_routing=Normal` adds `+100` to lag = **net +250 lag/step** → crash at lag > 4,000 within ≈ 16 steps. |
 | Let system crash immediately | `0.0` reward + episode ends in ~5 steps — worst possible outcome |
 
 ---
