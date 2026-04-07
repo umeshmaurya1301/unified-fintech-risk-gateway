@@ -14,7 +14,7 @@
 #
 #      To run against the live HF Space:
 #        docker run --rm \
-#          -e SPACE_URL=https://huggingface.co/spaces/umeshmaurya1301/unified-fintech-risk-gateway \
+#          -e SPACE_URL=https://huggingface.co/spaces/unknown1321/unified-fintech-risk-gateway \
 #          -e HF_TOKEN=hf_... \
 #          ufrg python inference.py
 # ─────────────────────────────────────────────────────────────────────────────

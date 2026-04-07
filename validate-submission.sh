@@ -13,7 +13,7 @@
 #   ./validate-submission.sh
 #
 # Override the Space URL:
-#   SPACE_URL=https://huggingface.co/spaces/umeshmaurya1301/unified-fintech-risk-gateway \
+#   SPACE_URL=https://huggingface.co/spaces/unknown1321/unified-fintech-risk-gateway \
 #     ./validate-submission.sh
 # =============================================================================
 

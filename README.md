@@ -257,7 +257,7 @@ docker run --rm ufrg
 
 The environment is deployed and publicly accessible at:
 
-**https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space**
+**https://unknown1321-unified-fintech-risk-gateway.hf.space**
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -320,7 +320,7 @@ docker run --rm -e DRY_RUN=true ufrg python inference.py
 
 # Live LLM against the deployed HF Space
 docker run --rm \
-  -e SPACE_URL=https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space \
+  -e SPACE_URL=https://unknown1321-unified-fintech-risk-gateway.hf.space \
   -e HF_TOKEN=hf_your_token_here \
   -e MODEL_NAME=Qwen/Qwen2.5-72B-Instruct \
   ufrg python inference.py
