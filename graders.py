@@ -94,7 +94,7 @@ class EasyGrader:
             Score in [0.0, 1.0].
         """
         if not trajectory:
-            return 0.0
+            return 0.01
 
         total_credit: float = 0.0
 
@@ -110,7 +110,7 @@ class EasyGrader:
             # else: reward < 0.8 → 0 credit
 
         raw_score = total_credit / len(trajectory)
-        return max(0.0, min(1.0, raw_score))
+        return round(max(0.01, min(0.99, raw_score)), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ class MediumGrader:
             Score in [0.0, 1.0].
         """
         if not trajectory:
-            return 0.0
+            return 0.01
 
         clean_steps:    int   = 0
         throttle_bonus: float = 0.0
@@ -189,7 +189,7 @@ class MediumGrader:
         normalised_bonus = min(throttle_bonus / len(trajectory), 0.1)
 
         raw_score = base_score + normalised_bonus
-        return max(0.0, min(1.0, raw_score))
+        return round(max(0.01, min(0.99, raw_score)), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ class HardGrader:
             Score in [0.0, 1.0].
         """
         if not trajectory:
-            return 0.0
+            return 0.01
 
         high_risk_steps:   int   = 0
         total_catch_score: float = 0.0
@@ -306,7 +306,7 @@ class HardGrader:
         sla_bonus = 0.1 * (sla_ok_steps / len(trajectory))
 
         raw_score = fcr - crash_penalty + sla_bonus
-        return max(0.0, min(1.0, raw_score))
+        return round(max(0.01, min(0.99, raw_score)), 2)
 
 
 # ---------------------------------------------------------------------------
