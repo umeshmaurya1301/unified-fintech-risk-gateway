@@ -155,19 +155,23 @@ The agent must **reject or challenge every transaction** while managing the rele
 Unlike environments with unbounded negative rewards, **UFRG normalizes all rewards to `[0.0, 1.0]`** per the OpenEnv specification. This creates a clean, interpretable signal for LLM agents:
 
 ```
-Reward = clamp(0.8 - penalties, 0.0, 1.0)
+Reward = clamp(0.8 + bonuses - penalties, 0.0, 1.0)
+# Maximum achievable: 0.85 (baseline + Challenge bonus on high-risk)
 ```
 
 ### Reward Table
 
-| Condition | Penalty | Rationale |
+| Condition | Effect | Rationale |
 |---|:---:|---|
 | **Baseline** (successful step) | `+0.8` | Standard transaction processed |
-| **Throttle** (Infra=1) | `-0.2` | Dropping legitimate user traffic |
+| **Throttle** (Infra=1, normal traffic) | `-0.2` | Dropping legitimate user traffic |
+| **Throttle** (Infra=1, flash-sale spike) | `-0.1` | Throttle during surge is correct — partial credit |
 | **SLA Breach** (P99 > 800ms) | `-0.3` | Merchant churn from latency |
 | **Circuit Breaker** (Infra=2) | `-0.5` | Nuclear option — gateway halted |
+| **Lag Proximity Warning** (3000 < lag ≤ 4000) | `-0.0 to -0.1` | Progressive early-warning signal before crash |
+| **Challenge** (Risk=2 on risk\_score > 80) | `+0.05` | Correct response: PIN reprompt before reject |
 | **Catastrophic Fraud** (Skip+Approve+HighRisk) | `-1.0` | Complete security failure |
-| **System Crash** (lag > 4000) | → `0.0` | Forced to zero — system is down |
+| **System Crash** (lag > 4000) | `→ 0.0` | Forced to zero — system is down |
 
 ### Why Normalized Rewards Matter
 
@@ -183,7 +187,7 @@ Every degenerate shortcut is defeated:
 |---|---|
 | Spam CircuitBreaker (avoid SLA penalties) | `0.8 - 0.5 = 0.3` per step — guaranteed low score |
 | Approve + Skip everything (maximize throughput) | Works on `easy`, catastrophic on `hard` (fraud gate = `0.0`) |
-| Reject everything (never trigger fraud) | Baseline `0.8` minus throttle pressure — moderate but not optimal |
+| Reject everything with Normal routing | Earns `0.8` baseline but Kafka lag grows +100/step unchecked — system crashes within ~30 steps |
 | Let system crash immediately | `0.0` reward + episode ends in ~5 steps — worst possible outcome |
 
 ---
@@ -245,6 +249,21 @@ docker build -t ufrg .
 # Run the validation suite
 docker run --rm ufrg
 ```
+
+### Live Hugging Face Space
+
+The environment is deployed and publicly accessible at:
+
+**https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space**
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/` | `GET` | Health check |
+| `/reset` | `POST` | Initialise a task — body: `{"task": "easy"}` |
+| `/step` | `POST` | Advance one step — body: `{"action": {...}}` |
+| `/state` | `GET` | Inspect current observation |
+
+---
 
 ### Validate with OpenEnv CLI
 
@@ -331,22 +350,24 @@ The script emits **exactly** three marker types per task — no stray output:
 ```
 unified-fintech-risk-gateway/
 ├── openenv.yaml          # OpenEnv manifest — tasks, spaces, entry_point
-├── pyproject.toml        # Package metadata, dependencies & pytest config
-├── unified_gateway.py    # Core environment: models, reset, step, state
-├── graders.py            # Per-task programmatic graders (Easy/Medium/Hard)
-├── inference.py          # OpenAI-compatible LLM inference agent
+├── pyproject.toml         # Package metadata, dependencies & pytest config
+├── unified_gateway.py     # Core environment: models, reset, step, state
+├── graders.py             # Per-task programmatic graders (easy/medium/hard)
+├── inference.py           # HTTP client agent — evaluates against live server
+├── validate-submission.sh # Pre-submission validation script
 ├── server/
-│   └── app.py            # FastAPI server for remote evaluation
+│   └── app.py             # FastAPI server for remote evaluation
 ├── tests/
-│   ├── test_foundation.py  # pytest: Pydantic models, reset(), state()
-│   ├── test_step.py        # pytest: reward branches, crash, done flags
-│   └── test_graders.py     # pytest: per-task grader logic
-├── Dockerfile            # Container for validation & deployment
-├── validate-submission.sh  # Pre-submission checklist script
-├── requirements.txt      # Minimal deps (gymnasium, numpy)
-├── verify_foundation.py  # Standalone Phase 2+3 Pydantic model tests
-├── verify_step.py        # Standalone Phase 4 reward/crash/done tests
-└── README.md             # This file
+│   ├── test_foundation.py   # pytest: Pydantic models + reset() + state()
+│   ├── test_step.py         # pytest: reward branches + crash + done logic
+│   └── test_graders.py      # pytest: per-task grader logic
+├── Dockerfile             # Container for validation & deployment
+├── requirements.txt       # Full production dependency list
+├── verify_foundation.py   # Standalone: Phase 2+3 Pydantic model checks
+├── verify_step.py         # Standalone: Phase 4 reward/crash/done checks
+├── docs/
+│   └── MASTER_DOC.md      # Internal architecture reference (not required for eval)
+└── README.md              # This file
 ```
 
 ---

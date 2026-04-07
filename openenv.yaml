@@ -7,6 +7,9 @@ description: "SRE/DevOps Gateway Orchestrator for UPI architectures. An LLM agen
 tags:
   - openenv
 
+# Live deployment URL — used by validate-submission.sh and evaluators
+space_url: "https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space"
+
 # Entry point for openenv validate
 entry_point: "unified_gateway:UnifiedFintechEnv"
 
