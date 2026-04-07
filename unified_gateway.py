@@ -141,6 +141,14 @@ class UFRGReward(BaseModel):
         default_factory=dict,
         description="Signed deltas showing how each penalty/bonus contributed.",
     )
+    crashed: bool = Field(
+        default=False,
+        description="True if the system crashed this step (rolling lag > 4000).",
+    )
+    circuit_breaker_tripped: bool = Field(
+        default=False,
+        description="True if the CircuitBreaker was activated this step.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +433,7 @@ class UnifiedFintechEnv(gym.Env):
     def step(
         self,
         action: UFRGAction,
-    ) -> tuple[UFRGObservation, float, bool, dict[str, Any]]:
+    ) -> tuple[UFRGObservation, UFRGReward, bool, dict[str, Any]]:
         """
         Run one time-step of the environment's dynamics.
 
@@ -546,6 +554,30 @@ class UnifiedFintechEnv(gym.Env):
         # ------------------------------------------------------------------
         final_reward: float = max(0.0, min(1.0, reward))
 
+        # Build the breakdown dict so graders and callers can inspect penalties
+        breakdown: dict[str, float] = {"baseline": 0.8}
+        if action.infra_routing == 1:
+            breakdown["throttle_penalty"] = -0.2
+        if rolling_p99 > 800.0:
+            breakdown["sla_breach_penalty"] = -0.3
+        if circuit_breaker_tripped:
+            breakdown["circuit_breaker_penalty"] = -0.5
+        if (
+            action.crypto_verify == 1
+            and action.risk_decision == 0
+            and risk_score > 80.0
+        ):
+            breakdown["fraud_penalty"] = -1.0
+        if self._rolling_lag > 4000.0 and not circuit_breaker_tripped:
+            breakdown["crash_override"] = 0.0
+
+        typed_reward = UFRGReward(
+            value=final_reward,
+            breakdown=breakdown,
+            crashed=self._rolling_lag > 4000.0 and not circuit_breaker_tripped,
+            circuit_breaker_tripped=circuit_breaker_tripped,
+        )
+
         info: dict[str, Any] = {
             # Episode progress
             "step":                     self.current_step,
@@ -564,11 +596,11 @@ class UnifiedFintechEnv(gym.Env):
             "reward_final":             final_reward,
             # Flags
             "circuit_breaker_tripped":  circuit_breaker_tripped,
-            "crashed":                  self._rolling_lag > 4000.0,
+            "crashed":                  typed_reward.crashed,
             "done":                     done,
             # Post-action accumulator state
             "internal_rolling_lag":     self._rolling_lag,
             "internal_rolling_latency": self._rolling_latency,
         }
 
-        return self._current_obs, final_reward, done, info
+        return self._current_obs, typed_reward, done, info

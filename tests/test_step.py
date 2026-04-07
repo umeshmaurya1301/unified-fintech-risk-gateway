@@ -3,9 +3,11 @@ tests/test_step.py — Pytest suite for Phase 4 (step() dynamics)
 ================================================================
 Replaces verify_step.py with proper pytest test functions.
 Satisfies M4: pytest-compatible test discovery (openenv validate, CI systems).
+
+Updated to handle UFRGReward return type from step() (H1 fix).
 """
 import pytest
-from unified_gateway import UFRGAction, UFRGObservation, UnifiedFintechEnv
+from unified_gateway import UFRGAction, UFRGObservation, UFRGReward, UnifiedFintechEnv
 
 
 def make_action(risk=0, infra=0, crypto=0) -> UFRGAction:
@@ -37,9 +39,16 @@ def test_step_obs_type(easy_env):
     assert isinstance(obs, UFRGObservation)
 
 
-def test_step_reward_float(easy_env):
+def test_step_reward_type(easy_env):
+    """step() now returns UFRGReward (typed Pydantic model) — not a bare float."""
     _, reward, _, _ = easy_env.step(make_action())
-    assert isinstance(reward, float)
+    assert isinstance(reward, UFRGReward)
+
+
+def test_step_reward_value_is_float(easy_env):
+    """reward.value must be a float in [0.0, 1.0]."""
+    _, reward, _, _ = easy_env.step(make_action())
+    assert isinstance(reward.value, float)
 
 
 def test_step_done_bool(easy_env):
@@ -60,7 +69,7 @@ def test_step_info_dict(easy_env):
 def test_reward_always_in_range(env, task):
     env.reset(options={"task": task})
     _, reward, _, _ = env.step(make_action())
-    assert 0.0 <= reward <= 1.0, f"Reward {reward} out of [0, 1]"
+    assert 0.0 <= reward.value <= 1.0, f"Reward {reward.value} out of [0, 1]"
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +88,7 @@ def test_baseline_reward(easy_env):
         rolling_p99=10.0,
     )
     _, r, _, info = easy_env.step(make_action(risk=0, infra=0, crypto=0))
-    assert 0.5 <= r <= 0.8, f"Baseline reward {r}, raw={info['reward_raw']}"
+    assert 0.5 <= r.value <= 0.8, f"Baseline reward {r.value}, raw={info['reward_raw']}"
 
 
 # ---------------------------------------------------------------------------
@@ -105,8 +114,8 @@ def test_throttle_penalty(env):
     )
     _, r_throttle, _, _ = env.step(make_action(infra=1))
 
-    assert abs((r_normal - r_throttle) - 0.2) < 0.05, \
-        f"normal={r_normal:.3f}, throttle={r_throttle:.3f}"
+    assert abs((r_normal.value - r_throttle.value) - 0.2) < 0.05, \
+        f"normal={r_normal.value:.3f}, throttle={r_throttle.value:.3f}"
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +162,7 @@ def test_sla_breach_penalty(easy_env):
 def test_fraud_gate_zeroes_reward(env):
     env.reset(options={"task": "hard"})   # hard always has risk > 85
     _, r_fraud, _, info = env.step(make_action(risk=0, infra=0, crypto=1))  # Approve+SkipVerify
-    assert r_fraud == 0.0, f"reward={r_fraud}, raw={info['reward_raw']:.3f}"
+    assert r_fraud.value == 0.0, f"reward={r_fraud.value}, raw={info['reward_raw']:.3f}"
     assert info["obs_risk_score"] > 80.0
 
 
@@ -165,7 +174,7 @@ def test_crash_zeroes_reward_and_sets_done(easy_env):
     easy_env._rolling_lag = 4500.0
     easy_env._rolling_latency = 10.0
     _, r, done, _ = easy_env.step(make_action(infra=0))
-    assert r == 0.0
+    assert r.value == 0.0
     assert done is True
 
 
@@ -188,6 +197,29 @@ def test_max_steps_triggers_done(easy_env):
         assert not done
     _, _, done, _ = easy_env.step(make_action())
     assert done
+
+
+# ---------------------------------------------------------------------------
+# UFRGReward model fields
+# ---------------------------------------------------------------------------
+
+def test_reward_has_breakdown(easy_env):
+    """UFRGReward.breakdown must be a dict with at least 'baseline'."""
+    _, reward, _, _ = easy_env.step(make_action())
+    assert isinstance(reward.breakdown, dict)
+    assert "baseline" in reward.breakdown
+
+
+def test_reward_crashed_flag(easy_env):
+    """reward.crashed must be False under normal conditions."""
+    _, reward, _, _ = easy_env.step(make_action())
+    assert reward.crashed is False
+
+
+def test_reward_circuit_breaker_flag(easy_env):
+    """reward.circuit_breaker_tripped must be True when CB is used."""
+    _, reward, _, _ = easy_env.step(make_action(infra=2))
+    assert reward.circuit_breaker_tripped is True
 
 
 # ---------------------------------------------------------------------------

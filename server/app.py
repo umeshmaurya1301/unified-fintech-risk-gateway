@@ -25,7 +25,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import ValidationError
 
-from unified_gateway import UFRGAction, UnifiedFintechEnv
+from unified_gateway import UFRGAction, UFRGReward, UnifiedFintechEnv
 
 # ---------------------------------------------------------------------------
 # Application bootstrap
@@ -161,11 +161,12 @@ async def step_env(request: Request):
     except (ValidationError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    obs, reward, done, info = env.step(action)
+    obs, typed_reward, done, info = env.step(action)
 
     return {
         "observation": obs.model_dump(),
-        "reward": float(reward),   # Explicit float ensures JSON number, not numpy scalar
+        "reward": typed_reward.value,          # scalar for OpenEnv clients
+        "reward_breakdown": typed_reward.breakdown,  # structured breakdown
         "done": bool(done),
         "info": info,
     }
