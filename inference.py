@@ -39,6 +39,7 @@ from openai import OpenAI
 # UFRGAction and UFRGObservation are imported ONLY for type-safe action
 # construction and response parsing — UnifiedFintechEnv is never instantiated.
 from unified_gateway import UFRGAction, UFRGObservation
+from graders import get_grader
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration from environment variables
@@ -273,6 +274,7 @@ async def main() -> None:
             print(f"[START] task={task} env=ufrg model={MODEL_NAME}")
 
             step_rewards: list[float] = []
+            trajectory:   list[dict]  = []   # accumulated info dicts for grader
             done = False
             current_step = 0
 
@@ -284,6 +286,7 @@ async def main() -> None:
                 obs, reward, done, info = await http_step(http, action)
 
                 step_rewards.append(reward)
+                trajectory.append(info)      # collect for post-episode grading
                 current_step += 1
                 done_str = "true" if done else "false"
 
@@ -295,19 +298,23 @@ async def main() -> None:
                     f"error=null"
                 )
 
-            # ── Episode summary ───────────────────────────────────────────
+            # ── Episode summary — use per-task programmatic grader ────────
             total_steps = len(step_rewards)
-            avg_score = sum(step_rewards) / total_steps if total_steps > 0 else 0.0
-            avg_score = max(0.0, min(1.0, avg_score))
-
-            success = "true" if avg_score > 0.0 else "false"
             rewards_csv = ",".join(f"{r:.2f}" for r in step_rewards)
+
+            # Dispatch to the task-specific grader (H2 fix).
+            # This replaces the naive avg-reward with a deterministic,
+            # task-aware score that matches the hackathon rubric.
+            grader = get_grader(task)
+            task_score: float = grader.grade(trajectory)
+
+            success = "true" if task_score > 0.0 else "false"
 
             # C2 FIX: score uses :.2f (2 decimal places) per OpenEnv spec
             print(
                 f"[END] success={success} "
                 f"steps={total_steps} "
-                f"score={avg_score:.2f} "
+                f"score={task_score:.2f} "
                 f"rewards={rewards_csv}"
             )
 

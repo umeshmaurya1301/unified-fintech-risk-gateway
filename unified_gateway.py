@@ -99,6 +99,50 @@ class UFRGObservation(BaseModel):
         )
 
 
+class UFRGReward(BaseModel):
+    """
+    Typed representation of the per-step reward signal.
+
+    The OpenEnv spec requires a ``Reward`` Pydantic model alongside
+    ``Observation`` and ``Action`` models.  This model documents the
+    reward contract and allows any client to deserialise reward payloads
+    without hard-coding the field names.
+
+    Fields
+    ------
+    value:
+        Clipped step reward in ``[0.0, 1.0]``.
+    breakdown:
+        Human-readable key → delta mapping that explains how ``value``
+        was computed.  Keys are short mnemonics; values are the signed
+        penalty/bonus applied at that step.
+
+    Example
+    -------
+    ::
+
+        UFRGReward(
+            value=0.5,
+            breakdown={
+                "baseline":         0.8,
+                "throttle_penalty": -0.2,
+                "sla_breach":       -0.3,
+                "circuit_breaker":   0.0,
+                "fraud_gate":        0.0,
+            }
+        )
+    """
+
+    value: float = Field(
+        ge=0.0, le=1.0,
+        description="Step reward, clipped to [0.0, 1.0].",
+    )
+    breakdown: dict[str, float] = Field(
+        default_factory=dict,
+        description="Signed deltas showing how each penalty/bonus contributed.",
+    )
+
+
 # ---------------------------------------------------------------------------
 
 
