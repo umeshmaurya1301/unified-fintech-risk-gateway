@@ -221,12 +221,17 @@ class UnifiedFintechEnv(gym.Env):
             nvec=np.array([3, 3, 2], dtype=np.int64),
         )
 
-    # ------------------------------------------------------------------
-    # reset — OpenEnv API  (task-driven, returns UFRGObservation)
-    # ------------------------------------------------------------------
-    def reset(self, task_name: str = "easy") -> UFRGObservation:
+    def reset(
+        self,
+        seed: int | None = None,
+        options: dict | None = None,
+    ) -> tuple["UFRGObservation", dict]:
         """
         Reset the environment for a new episode under the given task.
+
+        Conforms to the standard **Gymnasium** ``reset()`` signature so that
+        ``openenv validate`` and any Gymnasium-compatible harness can call this
+        method without keyword-argument errors.
 
         OpenEnv rubric requires three difficulty tiers:
           - ``"easy"``   → 100 % normal traffic (baseline SRE scenario)
@@ -235,34 +240,50 @@ class UnifiedFintechEnv(gym.Env):
 
         Parameters
         ----------
-        task_name : str, default ``"easy"``
-            One of ``{"easy", "medium", "hard"}``.
+        seed : int | None, default ``None``
+            Optional PRNG seed for reproducible episodes.  Passed to
+            ``gym.Env.reset()`` which seeds ``self.np_random``.
+        options : dict | None, default ``None``
+            Optional configuration dict.  Recognised key:
+            ``"task"`` — one of ``{"easy", "medium", "hard"}``.
+            Defaults to ``"easy"`` when absent.
 
         Returns
         -------
-        UFRGObservation
+        obs : UFRGObservation
             The initial typed observation for the episode.
-            (OpenEnv spec: returns the observation directly — not a tuple.)
+        info : dict
+            Metadata dict containing ``{"task": task_name}`` per the
+            Gymnasium standard return contract.
         """
-        # Seed the Gymnasium PRNG so _generate_transaction is reproducible
-        super().reset(seed=None)
+        # Seed the Gymnasium PRNG — parent call stores seed in self.np_random
+        super().reset(seed=seed)
 
-        # ---- Store the active task for use in step() and generate ------
+        # ---- Extract task from options (Gymnasium-standard pattern) --------
+        task_name: str = (options or {}).get("task", "easy")
+
+        # ---- Validate task name --------------------------------------------
+        if task_name not in {"easy", "medium", "hard"}:
+            raise ValueError(
+                f"Unknown task {task_name!r}; expected 'easy', 'medium', or 'hard'."
+            )
+
+        # ---- Store the active task for use in step() and generate ----------
         self.current_task: str = task_name
 
-        # ---- Episode counters ------------------------------------------
+        # ---- Episode counters ----------------------------------------------
         self.current_step: int = 0
 
-        # ---- Rolling-window EMA accumulators — reset to safe baselines -
+        # ---- Rolling-window EMA accumulators — reset to safe baselines -----
         self._rolling_lag: float = 0.0
         self._rolling_latency: float = 50.0
 
-        # ---- Generate the first transaction observation ----------------
+        # ---- Generate the first transaction observation --------------------
         self._current_obs: UFRGObservation = self._generate_transaction(
             self.current_task,
         )
 
-        return self._current_obs
+        return self._current_obs, {"task": task_name}
 
     # ------------------------------------------------------------------
     # state — OpenEnv API

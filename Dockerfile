@@ -1,6 +1,23 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Unified Fintech Risk Gateway (UFRG) — Production Container
 # ─────────────────────────────────────────────────────────────────────────────
+# Two usage modes:
+#
+#   1. API server (default — used by HF Spaces and openenv validate):
+#        docker run -p 7860:7860 ufrg
+#
+#   2. Inference / baseline scoring (used by evaluators for baseline scores):
+#        docker run --rm \
+#          -e SPACE_URL=http://localhost:7860 \
+#          -e DRY_RUN=true \
+#          ufrg python inference.py
+#
+#      To run against the live HF Space:
+#        docker run --rm \
+#          -e SPACE_URL=https://huggingface.co/spaces/umeshmaurya1301/unified-fintech-risk-gateway \
+#          -e HF_TOKEN=hf_... \
+#          ufrg python inference.py
+# ─────────────────────────────────────────────────────────────────────────────
 FROM python:3.10-slim
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
@@ -17,12 +34,13 @@ WORKDIR /app
 # ── Copy ALL application source (including server folder) ────────────────────
 COPY . /app
 
-# ── Install dependencies (Explicit for Hugging Face) ─────────────────────────
-RUN pip install --no-cache-dir openenv-core gymnasium numpy pydantic openai fastapi uvicorn
+# ── Install dependencies from requirements.txt ───────────────────────────────
+RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Port configuration ───────────────────────────────────────────────────────
 # Expose the exact port Hugging Face Spaces routes traffic to
 EXPOSE 7860
 
 # ── Default entrypoint: Start the FastAPI server ─────────────────────────────
+# Override with `docker run ufrg python inference.py` to run baseline scoring.
 CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "7860"]

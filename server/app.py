@@ -42,6 +42,7 @@ app = FastAPI(
 
 # Global environment instance.  Re-created on POST /reset to prevent state bleed.
 env = UnifiedFintechEnv()
+env.reset(options={"task": "easy"})   # prime with a valid initial state
 
 
 # ---------------------------------------------------------------------------
@@ -114,10 +115,8 @@ async def reset_env(request: Request):
         )
 
     # Re-instantiate completely — guarantees zero state bleed between episodes.
-    # This zeroes EMA accumulators (_rolling_lag, _rolling_latency) and the
-    # step counter so a subsequent episode is never contaminated by the last.
     env = UnifiedFintechEnv()
-    obs = env.reset(task_name=task_name)
+    obs, _info = env.reset(options={"task": task_name})
 
     return {"observation": obs.model_dump()}
 
