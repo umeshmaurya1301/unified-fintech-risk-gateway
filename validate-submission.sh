@@ -37,7 +37,7 @@ echo "============================================================"
 echo ""
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SPACE_URL="${SPACE_URL:-https://huggingface.co/spaces/unknown1321/unified-fintech-risk-gateway}"
+SPACE_URL="${SPACE_URL:-https://unknown1321-unified-fintech-risk-gateway.hf.space}"
 IMAGE_NAME="ufrg-validate"
 
 # ── Check 1: HF Space health ─────────────────────────────────────────────────
