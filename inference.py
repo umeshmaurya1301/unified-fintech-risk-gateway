@@ -45,7 +45,7 @@ from graders import get_grader
 # Configuration from environment variables
 # ──────────────────────────────────────────────────────────────────────────────
 
-SPACE_URL: str = os.environ.get("SPACE_URL", "http://localhost:7860").rstrip("/")
+SPACE_URL: str = os.environ.get("SPACE_URL", "https://unknown1321-unified-fintech-risk-gateway.hf.space").rstrip("/")
 API_BASE_URL: str = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME: str = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN: str = os.environ.get("HF_TOKEN", "")
@@ -251,6 +251,16 @@ def get_action(
 # main — evaluate all three tasks with strict [START]/[STEP]/[END] logs
 # ──────────────────────────────────────────────────────────────────────────────
 
+_REQUIRED_INFO_KEYS = frozenset([
+    "reward_final",
+    "crashed",
+    "obs_risk_score",
+    "obs_rolling_p99",
+    "action_risk_decision",
+    "action_infra_routing",
+    "event_type"
+])
+
 async def main() -> None:
     # ── Build the LLM client (skipped in dry-run mode) ──────────────────────
     llm_client: OpenAI | None = None
@@ -268,55 +278,70 @@ async def main() -> None:
     async with httpx.AsyncClient(base_url=SPACE_URL, timeout=30.0) as http:
 
         for task in tasks:
-            # ── Reset the server-side environment ────────────────────────────
-            obs: UFRGObservation = await http_reset(http, task)
-
-            print(f"[START] task={task} env=ufrg model={MODEL_NAME}")
-
             step_rewards: list[float] = []
             trajectory:   list[dict]  = []   # accumulated info dicts for grader
             done = False
             current_step = 0
+            task_score: float = 0.0
+            success = "false"
 
-            while not done:
-                # ── Decide action (LLM or heuristic) ─────────────────────
-                action: UFRGAction = get_action(llm_client, obs, dry_run=DRY_RUN)
+            try:
+                # ── Reset the server-side environment ────────────────────────────
+                obs: UFRGObservation = await http_reset(http, task)
 
-                # ── Advance the server-side environment ───────────────────
-                obs, reward, done, info = await http_step(http, action)
+                print(f"[START] task={task} env=ufrg model={MODEL_NAME}", flush=True)
 
-                step_rewards.append(reward)
-                trajectory.append(info)      # collect for post-episode grading
-                current_step += 1
-                done_str = "true" if done else "false"
+                while not done:
+                    # ── Decide action (LLM or heuristic) ─────────────────────
+                    action: UFRGAction = get_action(llm_client, obs, dry_run=DRY_RUN)
 
+                    # ── Advance the server-side environment ───────────────────
+                    obs, reward, done, info = await http_step(http, action)
+
+                    missing_keys = _REQUIRED_INFO_KEYS - info.keys()
+                    if missing_keys:
+                        raise RuntimeError(
+                            f"Server info dict missing required grader keys: {sorted(missing_keys)}"
+                        )
+
+                    step_rewards.append(reward)
+                    trajectory.append(info)      # collect for post-episode grading
+                    current_step += 1
+                    done_str = "true" if done else "false"
+
+                    print(
+                        f"[STEP] step={current_step} "
+                        f"action={action.model_dump_json()} "
+                        f"reward={reward:.2f} "
+                        f"done={done_str} "
+                        f"error=null",
+                        flush=True
+                    )
+
+                # ── Episode summary — use per-task programmatic grader ────────
+                # Dispatch to the task-specific grader (H2 fix).
+                # This replaces the naive avg-reward with a deterministic,
+                # task-aware score that matches the hackathon rubric.
+                grader = get_grader(task)
+                task_score = grader.grade(trajectory)
+                success = "true" if task_score > 0.0 else "false"
+
+            except Exception:
+                success = "false"
+                task_score = 0.0
+
+            finally:
+                total_steps = len(step_rewards)
+                rewards_csv = ",".join(f"{r:.2f}" for r in step_rewards)
+
+                # C2 FIX: score uses :.2f (2 decimal places) per OpenEnv spec
                 print(
-                    f"[STEP] step={current_step} "
-                    f"action={action.model_dump_json()} "
-                    f"reward={reward:.2f} "
-                    f"done={done_str} "
-                    f"error=null"
+                    f"[END] success={success} "
+                    f"steps={total_steps} "
+                    f"score={task_score:.2f} "
+                    f"rewards={rewards_csv}",
+                    flush=True
                 )
-
-            # ── Episode summary — use per-task programmatic grader ────────
-            total_steps = len(step_rewards)
-            rewards_csv = ",".join(f"{r:.2f}" for r in step_rewards)
-
-            # Dispatch to the task-specific grader (H2 fix).
-            # This replaces the naive avg-reward with a deterministic,
-            # task-aware score that matches the hackathon rubric.
-            grader = get_grader(task)
-            task_score: float = grader.grade(trajectory)
-
-            success = "true" if task_score > 0.0 else "false"
-
-            # C2 FIX: score uses :.2f (2 decimal places) per OpenEnv spec
-            print(
-                f"[END] success={success} "
-                f"steps={total_steps} "
-                f"score={task_score:.2f} "
-                f"rewards={rewards_csv}"
-            )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

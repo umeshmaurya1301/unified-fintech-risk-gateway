@@ -262,15 +262,20 @@ class HardGrader:
         high_risk_steps:   int   = 0
         total_catch_score: float = 0.0
         crash_count:       int   = 0
+        sla_ok_steps:      int   = 0
 
         for step in trajectory:
             risk_score: float = step.get("obs_risk_score", 0.0)
             decision:   int   = step.get("action_risk_decision", 0)
             crypto:     int   = step.get("action_crypto_verify", 0)
             crashed:    bool  = step.get("crashed", False)
+            p99:        float = step.get("obs_rolling_p99", 0.0)
 
             if crashed:
                 crash_count += 1
+                
+            if p99 <= 800.0:
+                sla_ok_steps += 1
 
             if risk_score > self.RISK_THRESHOLD:
                 high_risk_steps += 1
@@ -297,7 +302,10 @@ class HardGrader:
         # Crash penalty (proportional to crashes in the episode)
         crash_penalty = crash_count * self.CRASH_PENALTY
 
-        raw_score = fcr - crash_penalty
+        # SLA Bonus formula implementation
+        sla_bonus = 0.1 * (sla_ok_steps / len(trajectory))
+
+        raw_score = fcr - crash_penalty + sla_bonus
         return max(0.0, min(1.0, raw_score))
 
 

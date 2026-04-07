@@ -472,6 +472,7 @@ class UnifiedFintechEnv(gym.Env):
         risk_score:  float = self._current_obs.risk_score
         kafka_lag:   float = self._current_obs.kafka_lag
         rolling_p99: float = self._current_obs.rolling_p99
+        current_event_type: str = self._last_event_type
 
         circuit_breaker_tripped: bool = False
         done: bool = False
@@ -513,7 +514,7 @@ class UnifiedFintechEnv(gym.Env):
         # managing infra under legitimate surge) so the penalty is halved.
         # Throttle during normal traffic penalises legitimate users more.
         if action.infra_routing == 1:
-            if self._last_event_type == "flash_sale":
+            if current_event_type == "flash_sale":
                 reward -= 0.1   # Partial credit: right call, lower cost
             else:
                 reward -= 0.2   # Standard throttle penalty
@@ -521,6 +522,9 @@ class UnifiedFintechEnv(gym.Env):
         # ── 2. SLA breach penalty ────────────────────────────────────────────
         if rolling_p99 > 800.0:
             reward -= 0.3
+        elif 500.0 < rolling_p99 <= 800.0:
+            proximity = (rolling_p99 - 500.0) / 300.0
+            reward -= 0.1 * proximity
 
         # ── 3. System-halt penalty ───────────────────────────────────────────
         if circuit_breaker_tripped:
@@ -540,6 +544,10 @@ class UnifiedFintechEnv(gym.Env):
         # to give the agent a directional signal.
         if risk_score > 80.0 and action.risk_decision == 2:   # Challenge on high-risk
             reward += 0.05
+
+        # ── 5b. FullVerify bonus on high-risk transactions ───────────────────
+        if risk_score > 80.0 and action.crypto_verify == 0:
+            reward += 0.03
 
         # ── 6. Catastrophic fraud gate ───────────────────────────────────────
         # SkipVerify + Approve on a confirmed high-risk transaction is a
@@ -578,12 +586,15 @@ class UnifiedFintechEnv(gym.Env):
         # Build the breakdown dict so graders and callers can inspect penalties
         breakdown: dict[str, float] = {"baseline": 0.8}
         if action.infra_routing == 1:
-            if self._last_event_type == "flash_sale":
+            if current_event_type == "flash_sale":
                 breakdown["throttle_flash_sale_penalty"] = -0.1
             else:
                 breakdown["throttle_penalty"] = -0.2
         if rolling_p99 > 800.0:
             breakdown["sla_breach_penalty"] = -0.3
+        elif 500.0 < rolling_p99 <= 800.0:
+            proximity = (rolling_p99 - 500.0) / 300.0
+            breakdown["sla_proximity_warning"] = round(-0.1 * proximity, 4)
         if circuit_breaker_tripped:
             breakdown["circuit_breaker_penalty"] = -0.5
         if 3000.0 < self._rolling_lag <= 4000.0 and not circuit_breaker_tripped:
@@ -591,6 +602,8 @@ class UnifiedFintechEnv(gym.Env):
             breakdown["lag_proximity_warning"] = round(-0.1 * proximity, 4)
         if risk_score > 80.0 and action.risk_decision == 2:
             breakdown["challenge_bonus"] = 0.05
+        if risk_score > 80.0 and action.crypto_verify == 0:
+            breakdown["fullverify_bonus"] = 0.03
         if (
             action.crypto_verify == 1
             and action.risk_decision == 0
@@ -611,7 +624,7 @@ class UnifiedFintechEnv(gym.Env):
             # Episode progress
             "step":                     self.current_step,
             "task":                     self.current_task,
-            "event_type":               self._last_event_type,
+            "event_type":               current_event_type,
             # Observation that drove this step's decisions
             "obs_risk_score":           risk_score,
             "obs_kafka_lag":            kafka_lag,
