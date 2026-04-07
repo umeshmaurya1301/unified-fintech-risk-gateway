@@ -147,13 +147,13 @@ class TestHardGrader:
         assert score == pytest.approx(1.0)
 
     def test_all_approve_scores_zero(self):
-        traj = [make_step(risk_score=95.0, decision=0, crashed=False)] * 10
+        traj = [make_step(risk_score=95.0, decision=0, crashed=False, p99=1000.0)] * 10
         score = self.grader.grade(traj)
         assert score == pytest.approx(0.0)
 
     def test_challenge_scores_less_than_reject(self):
-        reject_traj    = [make_step(risk_score=95.0, decision=1, crashed=False)] * 10
-        challenge_traj = [make_step(risk_score=95.0, decision=2, crashed=False)] * 10
+        reject_traj    = [make_step(risk_score=95.0, decision=1, crashed=False, p99=1000.0)] * 10
+        challenge_traj = [make_step(risk_score=95.0, decision=2, crashed=False, p99=1000.0)] * 10
         assert self.grader.grade(reject_traj) > self.grader.grade(challenge_traj)
 
     def test_crash_penalises_score(self):
