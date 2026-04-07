@@ -1,42 +1,58 @@
 """
 OpenEnv Inference Script — Unified Fintech Risk Gateway
 ========================================================
-Evaluates UnifiedFintechEnv across all three task tiers (easy, medium, hard)
-using an LLM agent via the standard OpenAI Python client.
+Evaluates the environment across all three task tiers (easy, medium, hard)
+by calling the deployed FastAPI server via HTTP.
 
-Adheres strictly to the OpenEnv [START] / [STEP] / [END] logging contract.
+Architecture
+------------
+This script acts as a **decoupled HTTP client**.  It never imports or
+instantiates ``UnifiedFintechEnv`` directly.  All environment interaction
+goes through the server's REST API:
+
+    POST /reset  →  initialise a task, receive the first observation
+    POST /step   →  send an action, receive (obs, reward, done, info)
+
+This ensures the inference script exercises exactly the same code path that
+the automated OpenEnv grader uses, and any bugs in the server serialisation
+or routing are caught before submission.
 
 Environment variables
 ---------------------
-  API_BASE_URL   HuggingFace / OpenAI-compatible endpoint
+  SPACE_URL      Base URL of the running server (default: http://localhost:7860)
+  API_BASE_URL   HuggingFace / OpenAI-compatible LLM endpoint
   MODEL_NAME     Model identifier on the inference router
-  HF_TOKEN       Bearer token for the API
-  DRY_RUN        "true" to skip API calls and use a hardcoded fallback agent
+  HF_TOKEN       Bearer token for the LLM API
+  DRY_RUN        "true" to skip LLM calls and use a heuristic fallback agent
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 from typing import Any
 
+import httpx
 from openai import OpenAI
 
-from unified_gateway import UFRGAction, UFRGObservation, UnifiedFintechEnv
+# UFRGAction and UFRGObservation are imported ONLY for type-safe action
+# construction and response parsing — UnifiedFintechEnv is never instantiated.
+from unified_gateway import UFRGAction, UFRGObservation
 
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # Configuration from environment variables
-# ──────────────────────────────────────────────────────────────────────
-API_BASE_URL: str = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME:   str = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN:     str = os.environ.get("HF_TOKEN", "")
-DRY_RUN:      bool = os.environ.get("DRY_RUN", "false").strip().lower() == "true"
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ──────────────────────────────────────────────────────────────────────
+SPACE_URL: str = os.environ.get("SPACE_URL", "http://localhost:7860").rstrip("/")
+API_BASE_URL: str = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME: str = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN: str = os.environ.get("HF_TOKEN", "")
+DRY_RUN: bool = os.environ.get("DRY_RUN", "false").strip().lower() == "true"
+
+# ──────────────────────────────────────────────────────────────────────────────
 # System prompt — teaches the LLM how to act as the gateway agent
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """\
 You are the control agent for the Unified Fintech Risk Gateway (UFRG).
 
@@ -66,9 +82,73 @@ Output ONLY the three integers. No explanation. Example: 0 0 1
 """
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# HTTP helpers — call the deployed FastAPI server
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def http_reset(client: httpx.AsyncClient, task: str) -> UFRGObservation:
+    """
+    Call ``POST /reset`` on the server and return the initial observation.
+
+    Parameters
+    ----------
+    client:
+        A live ``httpx.AsyncClient`` pointed at the server base URL.
+    task:
+        One of ``"easy"``, ``"medium"``, or ``"hard"``.
+
+    Returns
+    -------
+    ``UFRGObservation`` constructed from the server JSON response.
+
+    Raises
+    ------
+    ``httpx.HTTPStatusError`` if the server returns a non-2xx status.
+    """
+    response = await client.post("/reset", json={"task": task})
+    response.raise_for_status()
+    data = response.json()
+    return UFRGObservation(**data["observation"])
+
+
+async def http_step(
+    client: httpx.AsyncClient,
+    action: UFRGAction,
+) -> tuple[UFRGObservation, float, bool, dict[str, Any]]:
+    """
+    Call ``POST /step`` on the server and return the standard Gymnasium tuple.
+
+    Parameters
+    ----------
+    client:
+        A live ``httpx.AsyncClient`` pointed at the server base URL.
+    action:
+        The validated ``UFRGAction`` to send.
+
+    Returns
+    -------
+    ``(observation, reward, done, info)`` matching the Gymnasium step contract.
+
+    Raises
+    ------
+    ``httpx.HTTPStatusError`` if the server returns a non-2xx status.
+    """
+    response = await client.post("/step", json={"action": action.model_dump()})
+    response.raise_for_status()
+    data = response.json()
+
+    obs = UFRGObservation(**data["observation"])
+    reward: float = float(data["reward"])
+    done: bool = bool(data["done"])
+    info: dict[str, Any] = data.get("info", {})
+
+    return obs, reward, done, info
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # parse_llm_action — safely extract a UFRGAction from LLM text
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+
 def parse_llm_action(text: str) -> UFRGAction:
     """
     Parse the LLM's text response into a validated ``UFRGAction``.
@@ -88,11 +168,11 @@ def parse_llm_action(text: str) -> UFRGAction:
         if len(numbers) < 3:
             return SAFE_FALLBACK
 
-        risk  = int(numbers[0])
+        risk = int(numbers[0])
         infra = int(numbers[1])
         crypto = int(numbers[2])
 
-        # Pydantic will validate ge/le constraints and raise on violation
+        # Pydantic validates ge/le constraints and raises on violation
         return UFRGAction(
             risk_decision=risk,
             infra_routing=infra,
@@ -102,26 +182,26 @@ def parse_llm_action(text: str) -> UFRGAction:
         return SAFE_FALLBACK
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # get_action — LLM call or dry-run fallback
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+
 def get_action(
-    client: OpenAI | None,
+    llm_client: OpenAI | None,
     obs: UFRGObservation,
     dry_run: bool = False,
 ) -> UFRGAction:
     """
     Decide the next action given the current observation.
 
-    In *dry-run* mode the LLM is bypassed entirely and a simple
-    heuristic is used instead — this allows local testing without
-    burning API credits.
+    In *dry-run* mode the LLM is bypassed entirely and a simple heuristic
+    is used instead — this allows local testing without burning API credits.
     """
     if dry_run:
-        # ── Heuristic agent (mirrors the SYSTEM_PROMPT guidelines) ──
-        risk = 0   # Approve by default
-        infra = 0  # Normal routing
-        crypto = 1 # SkipVerify for speed
+        # ── Heuristic agent (mirrors the SYSTEM_PROMPT guidelines) ──────────
+        risk = 0    # Approve by default
+        infra = 0   # Normal routing
+        crypto = 1  # SkipVerify for speed
 
         if obs.risk_score > 80.0:
             risk = 1    # Reject high-risk
@@ -141,8 +221,8 @@ def get_action(
             crypto_verify=crypto,
         )
 
-    # ── Live LLM call ────────────────────────────────────────────
-    assert client is not None, "OpenAI client is required when dry_run=False"
+    # ── Live LLM call ────────────────────────────────────────────────────────
+    assert llm_client is not None, "OpenAI client is required when dry_run=False"
 
     user_prompt = (
         f"channel={obs.channel:.0f} "
@@ -152,7 +232,7 @@ def get_action(
         f"rolling_p99={obs.rolling_p99:.0f}"
     )
 
-    response = client.chat.completions.create(
+    response = llm_client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -166,64 +246,72 @@ def get_action(
     return parse_llm_action(reply)
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # main — evaluate all three tasks with strict [START]/[STEP]/[END] logs
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+
 async def main() -> None:
-    # Build the OpenAI client (if not dry-run)
-    client: OpenAI | None = None
+    # ── Build the LLM client (skipped in dry-run mode) ──────────────────────
+    llm_client: OpenAI | None = None
     if not DRY_RUN:
-        client = OpenAI(
+        llm_client = OpenAI(
             base_url=API_BASE_URL,
             api_key=HF_TOKEN,
         )
 
     tasks = ["easy", "medium", "hard"]
 
-    for task in tasks:
-        env = UnifiedFintechEnv()
-        obs: UFRGObservation = env.reset(task_name=task)
+    # ── Single persistent HTTP client for all tasks ──────────────────────────
+    # Using a shared AsyncClient reuses the TCP connection across resets/steps,
+    # which reduces latency and avoids connection-limit issues.
+    async with httpx.AsyncClient(base_url=SPACE_URL, timeout=30.0) as http:
 
-        print(f"[START] task={task} env=ufrg model={MODEL_NAME}")
+        for task in tasks:
+            # ── Reset the server-side environment ────────────────────────────
+            obs: UFRGObservation = await http_reset(http, task)
 
-        step_rewards: list[float] = []
-        done = False
+            print(f"[START] task={task} env=ufrg model={MODEL_NAME}")
 
-        while not done:
-            # ── Get action (LLM or heuristic) ────────────────────
-            action: UFRGAction = get_action(client, obs, dry_run=DRY_RUN)
+            step_rewards: list[float] = []
+            done = False
+            current_step = 0
 
-            # ── Step the environment ─────────────────────────────
-            obs, reward, done, info = env.step(action)
+            while not done:
+                # ── Decide action (LLM or heuristic) ─────────────────────
+                action: UFRGAction = get_action(llm_client, obs, dry_run=DRY_RUN)
 
-            step_rewards.append(reward)
-            current_step = env.current_step
-            done_str = "true" if done else "false"
+                # ── Advance the server-side environment ───────────────────
+                obs, reward, done, info = await http_step(http, action)
 
+                step_rewards.append(reward)
+                current_step += 1
+                done_str = "true" if done else "false"
+
+                print(
+                    f"[STEP] step={current_step} "
+                    f"action={action.model_dump_json()} "
+                    f"reward={reward:.2f} "
+                    f"done={done_str} "
+                    f"error=null"
+                )
+
+            # ── Episode summary ───────────────────────────────────────────
+            total_steps = len(step_rewards)
+            avg_score = sum(step_rewards) / total_steps if total_steps > 0 else 0.0
+            avg_score = max(0.0, min(1.0, avg_score))
+
+            success = "true" if avg_score > 0.0 else "false"
+            rewards_csv = ",".join(f"{r:.2f}" for r in step_rewards)
+
+            # C2 FIX: score uses :.2f (2 decimal places) per OpenEnv spec
             print(
-                f"[STEP] step={current_step} "
-                f"action={action.model_dump_json()} "
-                f"reward={reward:.2f} "
-                f"done={done_str} "
-                f"error=null"
+                f"[END] success={success} "
+                f"steps={total_steps} "
+                f"score={avg_score:.2f} "
+                f"rewards={rewards_csv}"
             )
 
-        # ── Episode summary ──────────────────────────────────────
-        total_steps = len(step_rewards)
-        avg_score = sum(step_rewards) / total_steps if total_steps > 0 else 0.0
-        avg_score = max(0.0, min(1.0, avg_score))
 
-        success = "true" if avg_score > 0.0 else "false"
-        rewards_csv = ",".join(f"{r:.2f}" for r in step_rewards)
-
-        print(
-            f"[END] success={success} "
-            f"steps={total_steps} "
-            f"score={avg_score:.3f} "
-            f"rewards={rewards_csv}"
-        )
-
-
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     asyncio.run(main())
