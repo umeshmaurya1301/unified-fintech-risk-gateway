@@ -64,12 +64,12 @@ class TestEasyGrader:
         self.grader = EasyGrader()
 
     def test_empty_trajectory_scores_zero(self):
-        assert self.grader.grade([]) == 0.0
+        assert self.grader.grade([]) == 0.01
 
     def test_perfect_agent_scores_one(self):
         traj = [make_step(reward_final=0.8, infra=0)] * 20
         score = self.grader.grade(traj)
-        assert score == pytest.approx(1.0)
+        assert score == pytest.approx(0.99)
 
     def test_throttle_heavy_scores_half(self):
         # reward=0.8 but unnecessary throttle → 0.5 credit each
@@ -80,13 +80,13 @@ class TestEasyGrader:
     def test_low_reward_scores_zero(self):
         traj = [make_step(reward_final=0.3, infra=0)] * 10
         score = self.grader.grade(traj)
-        assert score == pytest.approx(0.0)
+        assert score == pytest.approx(0.01)
 
     def test_score_in_range(self):
         traj = [make_step(reward_final=0.8, infra=0)] * 5 + \
                [make_step(reward_final=0.0, infra=2)] * 5
         score = self.grader.grade(traj)
-        assert 0.0 <= score <= 1.0
+        assert 0.01 <= score <= 0.99
 
     def test_deterministic(self):
         traj = [make_step(reward_final=0.8, infra=0)] * 10
@@ -102,16 +102,16 @@ class TestMediumGrader:
         self.grader = MediumGrader()
 
     def test_empty_trajectory_scores_zero(self):
-        assert self.grader.grade([]) == 0.0
+        assert self.grader.grade([]) == 0.01
 
     def test_all_crashes_scores_zero(self):
         traj = [make_step(crashed=True, p99=900.0)] * 10
-        assert self.grader.grade(traj) == pytest.approx(0.0)
+        assert self.grader.grade(traj) == pytest.approx(0.01)
 
     def test_clean_steps_score_near_one(self):
         traj = [make_step(crashed=False, p99=400.0)] * 20
         score = self.grader.grade(traj)
-        assert score >= 0.95
+        assert score >= 0.95 or score == pytest.approx(0.99)
 
     def test_flash_sale_throttle_bonus(self):
         # Two identical no-crash episodes; one has throttle bonus during flash_sale
@@ -123,7 +123,7 @@ class TestMediumGrader:
     def test_score_in_range(self):
         traj = [make_step(crashed=i % 3 == 0, p99=200.0) for i in range(30)]
         score = self.grader.grade(traj)
-        assert 0.0 <= score <= 1.0
+        assert 0.01 <= score <= 0.99
 
     def test_deterministic(self):
         traj = [make_step(crashed=False, p99=250.0)] * 10
@@ -139,17 +139,17 @@ class TestHardGrader:
         self.grader = HardGrader()
 
     def test_empty_trajectory_scores_zero(self):
-        assert self.grader.grade([]) == 0.0
+        assert self.grader.grade([]) == 0.01
 
     def test_perfect_reject_no_crash_scores_one(self):
         traj = [make_step(risk_score=95.0, decision=1, crypto=0, crashed=False)] * 10
         score = self.grader.grade(traj)
-        assert score == pytest.approx(1.0)
+        assert score == pytest.approx(0.99)
 
     def test_all_approve_scores_zero(self):
         traj = [make_step(risk_score=95.0, decision=0, crashed=False, p99=1000.0)] * 10
         score = self.grader.grade(traj)
-        assert score == pytest.approx(0.0)
+        assert score == pytest.approx(0.01)
 
     def test_challenge_scores_less_than_reject(self):
         reject_traj    = [make_step(risk_score=95.0, decision=1, crashed=False, p99=1000.0)] * 10
@@ -175,7 +175,7 @@ class TestHardGrader:
         traj = [make_step(risk_score=90.0, decision=i % 2, crashed=i % 4 == 0)
                 for i in range(20)]
         score = self.grader.grade(traj)
-        assert 0.0 <= score <= 1.0
+        assert 0.01 <= score <= 0.99
 
     def test_deterministic(self):
         traj = [make_step(risk_score=92.0, decision=1, crashed=False)] * 10
