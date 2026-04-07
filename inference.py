@@ -48,7 +48,7 @@ from graders import get_grader
 SPACE_URL: str = os.environ.get("SPACE_URL", "https://unknown1321-unified-fintech-risk-gateway.hf.space").rstrip("/")
 API_BASE_URL: str = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME: str = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN: str = os.environ.get("HF_TOKEN", "")
+HF_TOKEN: str | None = os.environ.get("HF_TOKEN")
 DRY_RUN: bool = os.environ.get("DRY_RUN", "false").strip().lower() == "true"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -285,11 +285,11 @@ async def main() -> None:
             task_score: float = 0.0
             success = "false"
 
+            print(f"[START] task={task} env=ufrg model={MODEL_NAME}", flush=True)
+
             try:
                 # ── Reset the server-side environment ────────────────────────────
                 obs: UFRGObservation = await http_reset(http, task)
-
-                print(f"[START] task={task} env=ufrg model={MODEL_NAME}", flush=True)
 
                 while not done:
                     # ── Decide action (LLM or heuristic) ─────────────────────
@@ -326,13 +326,23 @@ async def main() -> None:
                 task_score = grader.grade(trajectory)
                 success = "true" if task_score > 0.0 else "false"
 
-            except Exception:
+            except Exception as exc:
                 success = "false"
                 task_score = 0.0
+                if current_step == 0:
+                    print(
+                        f"[STEP] step=1 "
+                        f"action=null "
+                        f"reward=0.00 "
+                        f"done=true "
+                        f"error={exc}",
+                        flush=True
+                    )
+                    step_rewards = [0.0]
 
             finally:
-                total_steps = len(step_rewards)
-                rewards_csv = ",".join(f"{r:.2f}" for r in step_rewards)
+                total_steps = max(current_step, len(step_rewards))
+                rewards_csv = ",".join(f"{r:.2f}" for r in step_rewards) or "0.00"
 
                 # C2 FIX: score uses :.2f (2 decimal places) per OpenEnv spec
                 print(

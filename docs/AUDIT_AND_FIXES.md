@@ -74,7 +74,7 @@ SPACE_URL: str = os.environ.get("SPACE_URL", "http://localhost:7860").rstrip("/"
 # AFTER
 SPACE_URL: str = os.environ.get(
     "SPACE_URL",
-    "https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space",
+    "https://unknown1321-unified-fintech-risk-gateway.hf.space",
 ).rstrip("/")
 ```
 
@@ -488,7 +488,7 @@ SPACE_URL=http://127.0.0.1:9 DRY_RUN=false python inference.py 2>/dev/null | gre
 # Expected: [END] success=false steps=1 score=0.00 rewards=0.00  (not silent)
 
 # 7. Full pre-submission gate
-HF_SPACE_URL=https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space \
+HF_SPACE_URL=https://unknown1321-unified-fintech-risk-gateway.hf.space \
   ./validate-submission.sh
 ```
 

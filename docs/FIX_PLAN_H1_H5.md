@@ -828,13 +828,13 @@ The script must be in the repo so reviewers can see that pre-submission checks w
 #
 # Set HF_SPACE_URL to your live Hugging Face Space URL before running.
 # Example:
-#   HF_SPACE_URL="https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space" \
+#   HF_SPACE_URL="https://unknown1321-unified-fintech-risk-gateway.hf.space" \
 #   ./validate-submission.sh
 
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────
-HF_SPACE_URL="${HF_SPACE_URL:-https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space}"
+HF_SPACE_URL="${HF_SPACE_URL:-https://unknown1321-unified-fintech-risk-gateway.hf.space}"
 IMAGE_NAME="ufrg-validate"
 PASS=0
 FAIL=0

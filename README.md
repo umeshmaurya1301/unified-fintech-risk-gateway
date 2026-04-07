@@ -156,7 +156,7 @@ Unlike environments with unbounded negative rewards, **UFRG normalizes all rewar
 
 ```
 Reward = clamp(0.8 + bonuses - penalties, 0.0, 1.0)
-# Maximum achievable: 0.85 (baseline + Challenge bonus on high-risk)
+# Maximum achievable: 0.88 (baseline 0.80 + Challenge bonus +0.05 + FullVerify bonus +0.03)
 ```
 
 ### Reward Table
@@ -167,9 +167,11 @@ Reward = clamp(0.8 + bonuses - penalties, 0.0, 1.0)
 | **Throttle** (Infra=1, normal traffic) | `-0.2` | Dropping legitimate user traffic |
 | **Throttle** (Infra=1, flash-sale spike) | `-0.1` | Throttle during surge is correct — partial credit |
 | **SLA Breach** (P99 > 800ms) | `-0.3` | Merchant churn from latency |
+| **SLA Proximity Warning** (500ms < P99 ≤ 800ms) | `-0.0 to -0.1` | Progressive early-warning signal |
 | **Circuit Breaker** (Infra=2) | `-0.5` | Nuclear option — gateway halted |
 | **Lag Proximity Warning** (3000 < lag ≤ 4000) | `-0.0 to -0.1` | Progressive early-warning signal before crash |
 | **Challenge** (Risk=2 on risk\_score > 80) | `+0.05` | Correct response: PIN reprompt before reject |
+| **FullVerify** (Crypto=0 on risk_score > 80) | `+0.03` | Correct crypto gate on high-risk |
 | **Catastrophic Fraud** (Skip+Approve+HighRisk) | `-1.0` | Complete security failure |
 | **System Crash** (lag > 4000) | `→ 0.0` | Forced to zero — system is down |
 

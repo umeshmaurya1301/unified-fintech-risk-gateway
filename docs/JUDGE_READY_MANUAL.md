@@ -341,14 +341,14 @@ git push origin main
 ```bash
 # Poll until the Space returns 200
 watch -n 10 "curl -s -o /dev/null -w '%{http_code}' \
-  https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space/"
+  https://unknown1321-unified-fintech-risk-gateway.hf.space/"
 ```
 
 Wait until the response changes from `503` (rebuilding) → `200` (live).
 
 **Verify the live Space after deploy:**
 ```bash
-HF_SPACE=https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space
+HF_SPACE=https://unknown1321-unified-fintech-risk-gateway.hf.space
 
 curl -s "$HF_SPACE/"
 curl -s -X POST "$HF_SPACE/reset" \
@@ -406,7 +406,7 @@ This catches server serialisation bugs locally before they reach the live Space.
 ### Step 3.3 — Switch to the Live HF Space for Final Validation
 
 ```bash
-export SPACE_URL="https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space"
+export SPACE_URL="https://unknown1321-unified-fintech-risk-gateway.hf.space"
 python inference.py
 ```
 
@@ -558,7 +558,7 @@ chmod +x validate-submission.sh
 HF_SPACE_URL=http://localhost:7860 ./validate-submission.sh
 
 # Stage 2 — against live HF Space (final gate before submission)
-HF_SPACE_URL=https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space \
+HF_SPACE_URL=https://unknown1321-unified-fintech-risk-gateway.hf.space \
   ./validate-submission.sh
 ```
 
@@ -631,10 +631,10 @@ time (SPACE_URL=http://localhost:7860 DRY_RUN=true python inference.py > /dev/nu
 git add -A && git commit -m "fix: judge-ready submission"
 git push origin main
 sleep 60
-curl -s https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space/
+curl -s https://unknown1321-unified-fintech-risk-gateway.hf.space/
 
 # ── Full pre-submission validation ───────────────────────────────────────────
-HF_SPACE_URL=https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space \
+HF_SPACE_URL=https://unknown1321-unified-fintech-risk-gateway.hf.space \
   ./validate-submission.sh
 ```
 

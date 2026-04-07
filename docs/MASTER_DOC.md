@@ -275,7 +275,7 @@ This dynamics model teaches agents to make **proactive** infrastructure decision
 **Step 1: Clone the Repository**
 
 ```bash
-git clone https://github.com/umeshmaurya1301/unified-fintech-risk-gateway.git
+git clone https://github.com/unknown1321/unified-fintech-risk-gateway.git
 cd unified-fintech-risk-gateway
 ```
 
@@ -345,7 +345,7 @@ Internet → Hugging Face Reverse Proxy → Docker Container → Uvicorn → Fas
 ```dockerfile
 FROM python:3.10-slim
 
-LABEL maintainer="Umesh Maurya <umeshmaurya1301>" \
+LABEL maintainer="Umesh Maurya <unknown1321>" \
     description="Unified Fintech Risk Gateway — Gymnasium RL Environment" \
     version="1.0.0"
 
