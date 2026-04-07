@@ -118,7 +118,7 @@ async def reset_env(request: Request):
     env = UnifiedFintechEnv()
     obs, _info = env.reset(options={"task": task_name})
 
-    return {"observation": obs.model_dump()}
+    return {"observation": obs.model_dump(), "info": _info}
 
 
 # ---------------------------------------------------------------------------

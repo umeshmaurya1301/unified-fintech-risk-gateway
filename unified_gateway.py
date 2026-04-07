@@ -508,21 +508,42 @@ class UnifiedFintechEnv(gym.Env):
         # ------------------------------------------------------------------
         reward: float = 0.8     # Baseline: one successful transaction processed
 
-        # — Traffic-drop penalty (throttle hurts legitimate users) —
+        # ── 1. Traffic-drop penalty ──────────────────────────────────────────
+        # Throttle during a flash-sale event is CORRECT behaviour (agent is
+        # managing infra under legitimate surge) so the penalty is halved.
+        # Throttle during normal traffic penalises legitimate users more.
         if action.infra_routing == 1:
-            reward -= 0.2
+            if self._last_event_type == "flash_sale":
+                reward -= 0.1   # Partial credit: right call, lower cost
+            else:
+                reward -= 0.2   # Standard throttle penalty
 
-        # — SLA breach penalty (evaluated on the observation that triggered this step) —
+        # ── 2. SLA breach penalty ────────────────────────────────────────────
         if rolling_p99 > 800.0:
             reward -= 0.3
 
-        # — System-halt penalty (circuit breaker is a nuclear option) —
+        # ── 3. System-halt penalty ───────────────────────────────────────────
         if circuit_breaker_tripped:
             reward -= 0.5
 
-        # — Catastrophic fraud gate —
-        #   SkipVerify + Approve on a confirmed high-risk transaction
-        #   is a complete security failure.
+        # ── 4. Kafka lag proximity warning (partial progress signal) ─────────
+        # Give the agent a progressive early-warning signal before the hard
+        # crash cliff at lag=4000. No signal below 3000; graded above it.
+        if 3000.0 < self._rolling_lag <= 4000.0 and not circuit_breaker_tripped:
+            # Scale from 0.0 (at lag=3000) to -0.1 (at lag=4000)
+            proximity = (self._rolling_lag - 3000.0) / 1000.0   # [0.0, 1.0]
+            reward -= 0.1 * proximity
+
+        # ── 5. Challenge bonus on high-risk transactions ─────────────────────
+        # Challenge (risk=2) is the correct risk disposition: PIN reprompt
+        # before rejection. Reward it slightly more than Reject (risk=1)
+        # to give the agent a directional signal.
+        if risk_score > 80.0 and action.risk_decision == 2:   # Challenge on high-risk
+            reward += 0.05
+
+        # ── 6. Catastrophic fraud gate ───────────────────────────────────────
+        # SkipVerify + Approve on a confirmed high-risk transaction is a
+        # complete security failure — zeroes the reward regardless of other actions.
         if (
             action.crypto_verify  == 1      # SkipVerify
             and action.risk_decision == 0   # Approve
@@ -557,11 +578,19 @@ class UnifiedFintechEnv(gym.Env):
         # Build the breakdown dict so graders and callers can inspect penalties
         breakdown: dict[str, float] = {"baseline": 0.8}
         if action.infra_routing == 1:
-            breakdown["throttle_penalty"] = -0.2
+            if self._last_event_type == "flash_sale":
+                breakdown["throttle_flash_sale_penalty"] = -0.1
+            else:
+                breakdown["throttle_penalty"] = -0.2
         if rolling_p99 > 800.0:
             breakdown["sla_breach_penalty"] = -0.3
         if circuit_breaker_tripped:
             breakdown["circuit_breaker_penalty"] = -0.5
+        if 3000.0 < self._rolling_lag <= 4000.0 and not circuit_breaker_tripped:
+            proximity = (self._rolling_lag - 3000.0) / 1000.0
+            breakdown["lag_proximity_warning"] = round(-0.1 * proximity, 4)
+        if risk_score > 80.0 and action.risk_decision == 2:
+            breakdown["challenge_bonus"] = 0.05
         if (
             action.crypto_verify == 1
             and action.risk_decision == 0

@@ -42,5 +42,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 7860
 
 # ── Default entrypoint: Start the FastAPI server ─────────────────────────────
-# Override with `docker run ufrg python inference.py` to run baseline scoring.
+# This is the default used by Hugging Face Spaces and openenv validate.
+#
+# To run the baseline inference script instead (reproduces dry-run scores):
+#   docker run --rm -e DRY_RUN=true ufrg python inference.py
+#
+# To run against the live HF Space with a real LLM:
+#   docker run --rm \
+#     -e SPACE_URL=https://<your-space>.hf.space \
+#     -e HF_TOKEN=hf_... \
+#     -e MODEL_NAME=Qwen/Qwen2.5-72B-Instruct \
+#     ufrg python inference.py
 CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "7860"]

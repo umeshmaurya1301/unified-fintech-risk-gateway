@@ -287,6 +287,23 @@ export API_BASE_URL="https://router.huggingface.co/v1"
 python inference.py
 ```
 
+### Run Baseline Scoring Inside Docker
+
+The container defaults to the API server. To run `inference.py` inside the
+same container (e.g., to reproduce baseline scores without a local Python install):
+
+```bash
+# Dry-run (no API key needed)
+docker run --rm -e DRY_RUN=true ufrg python inference.py
+
+# Live LLM against the deployed HF Space
+docker run --rm \
+  -e SPACE_URL=https://umeshmaurya1301-unified-fintech-risk-gateway.hf.space \
+  -e HF_TOKEN=hf_your_token_here \
+  -e MODEL_NAME=Qwen/Qwen2.5-72B-Instruct \
+  ufrg python inference.py
+```
+
 ### Output Format (OpenEnv Strict Logging)
 
 The script emits **exactly** three marker types per task — no stray output:
@@ -314,16 +331,21 @@ The script emits **exactly** three marker types per task — no stray output:
 ```
 unified-fintech-risk-gateway/
 ├── openenv.yaml          # OpenEnv manifest — tasks, spaces, entry_point
-├── pyproject.toml        # Package metadata & dependencies
+├── pyproject.toml        # Package metadata, dependencies & pytest config
 ├── unified_gateway.py    # Core environment: models, reset, step, state
+├── graders.py            # Per-task programmatic graders (Easy/Medium/Hard)
 ├── inference.py          # OpenAI-compatible LLM inference agent
 ├── server/
 │   └── app.py            # FastAPI server for remote evaluation
+├── tests/
+│   ├── test_foundation.py  # pytest: Pydantic models, reset(), state()
+│   ├── test_step.py        # pytest: reward branches, crash, done flags
+│   └── test_graders.py     # pytest: per-task grader logic
 ├── Dockerfile            # Container for validation & deployment
+├── validate-submission.sh  # Pre-submission checklist script
 ├── requirements.txt      # Minimal deps (gymnasium, numpy)
-├── dummy_test.py         # Legacy Gymnasium stress test
-├── verify_foundation.py  # Phase 2+3 Pydantic model tests
-├── verify_step.py        # Phase 4 reward/crash/done tests
+├── verify_foundation.py  # Standalone Phase 2+3 Pydantic model tests
+├── verify_step.py        # Standalone Phase 4 reward/crash/done tests
 └── README.md             # This file
 ```
 

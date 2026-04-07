@@ -1,7 +1,7 @@
 """
 Phase 2 + 3 — Foundation & Task-Driven Reset / State Verification
 ==================================================================
-Validates UFRGAction, UFRGObservation, reset(task_name), state(),
+Validates UFRGAction, UFRGObservation, reset(options), state(),
 and _generate_transaction() across all three difficulty tiers.
 """
 from unified_gateway import UFRGAction, UFRGObservation, UnifiedFintechEnv
@@ -45,54 +45,60 @@ print("\n── Phase 3: reset() ──")
 env = UnifiedFintechEnv()
 
 for task in ["easy", "medium", "hard"]:
-    obs = env.reset(task_name=task)
+    result = env.reset(options={"task": task})
 
-    check(f"reset('{task}') returns UFRGObservation",
+    check(f"reset('{task}') returns 2-tuple",
+          isinstance(result, tuple) and len(result) == 2,
+          f"got {type(result)}")
+
+    obs, info = result
+
+    check(f"reset('{task}') obs is UFRGObservation",
           isinstance(obs, UFRGObservation))
-    check(f"reset('{task}') NOT a tuple",
-          not isinstance(obs, tuple),
-          f"got {type(obs)}")
+    check(f"reset('{task}') info is dict with task key",
+          isinstance(info, dict) and info.get("task") == task,
+          f"got info={info}")
     check(f"reset('{task}') current_task stored",
           env.current_task == task)
     check(f"reset('{task}') current_step == 0",
           env.current_step == 0)
     if task == "hard":
-        # Hard profile inflates _rolling_lag during the first _generate_transaction
-        # call inside reset(), so it won't be 0.0 after reset returns.
         check(f"reset('{task}') _rolling_lag in hard-task range",
               0.0 < env._rolling_lag < 500.0,
               f"got {env._rolling_lag}")
     else:
-        # Easy starts near 0.0 (only minor jitter from baseline).
-        # Medium can spike on the first tick if flash-sale fires (20% chance),
-        # so we allow a wider but still bounded range.
         upper = 50.0 if task == "easy" else 1200.0
         check(f"reset('{task}') _rolling_lag in sane range",
               env._rolling_lag < upper,
               f"got {env._rolling_lag}")
-    # _rolling_latency starts at 50.0 but EMA update in _generate_transaction
-    # will shift it slightly — just check it's in a sane range
     check(f"reset('{task}') _rolling_latency near baseline",
           0.0 < env._rolling_latency < 500.0,
           f"got {env._rolling_latency}")
 
-# ── Default task_name ─────────────────────────────────────────────────
-obs_default = env.reset()
+# ── Default (no options) ──────────────────────────────────────────────
+obs_default, info_default = env.reset()
 check("reset() defaults to 'easy'", env.current_task == "easy")
 
-# ── Bad task_name ─────────────────────────────────────────────────────
+# ── Seed reproducibility ──────────────────────────────────────────────
+obs_a, _ = env.reset(seed=42, options={"task": "easy"})
+obs_b, _ = env.reset(seed=42, options={"task": "easy"})
+check("reset(seed=42) produces same first obs",
+      obs_a.risk_score == obs_b.risk_score and obs_a.channel == obs_b.channel,
+      f"obs_a={obs_a.risk_score:.2f}, obs_b={obs_b.risk_score:.2f}")
+
+# ── Bad task raises ValueError ────────────────────────────────────────
 try:
-    env.reset(task_name="nightmare")
-    check("reset('nightmare') raises ValueError", False, "no error raised")
+    env.reset(options={"task": "nightmare"})
+    check("reset(options={'task':'nightmare'}) raises ValueError", False, "no error raised")
 except ValueError:
-    check("reset('nightmare') raises ValueError", True)
+    check("reset(options={'task':'nightmare'}) raises ValueError", True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 print("\n── Phase 3: state() ──")
 # ═══════════════════════════════════════════════════════════════════════
 
-obs = env.reset(task_name="easy")
+obs, _ = env.reset(options={"task": "easy"})
 st = env.state()
 check("state() returns UFRGObservation", isinstance(st, UFRGObservation))
 check("state() matches reset() result",
@@ -106,7 +112,7 @@ print("\n── Phase 3: _generate_transaction() per task ──")
 # ═══════════════════════════════════════════════════════════════════════
 
 # EASY: risk should always be low
-env.reset(task_name="easy")
+env.reset(options={"task": "easy"})
 easy_risks = []
 for _ in range(50):
     obs = env._generate_transaction("easy")
@@ -119,7 +125,7 @@ check("easy: all risk_scores ≥ 5",
       f"min was {min(easy_risks):.1f}")
 
 # HARD: risk should always be high
-env.reset(task_name="hard")
+env.reset(options={"task": "hard"})
 hard_risks = []
 for _ in range(50):
     obs = env._generate_transaction("hard")
@@ -129,7 +135,7 @@ check("hard: all risk_scores ≥ 85",
       f"min was {min(hard_risks):.1f}")
 
 # MEDIUM: majority should be normal, some flash-sale
-env.reset(task_name="medium")
+env.reset(options={"task": "medium"})
 events = []
 for _ in range(200):
     env._generate_transaction("medium")
@@ -142,7 +148,7 @@ check(f"medium: ~20% flash_sale (got {flash_pct:.0f}%)",
       5 < flash_pct < 45)
 
 # MEDIUM flash-sale should spike lag
-env.reset(task_name="medium")
+env.reset(options={"task": "medium"})
 initial_lag = env._rolling_lag
 for _ in range(30):
     env._generate_transaction("medium")
