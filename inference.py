@@ -255,10 +255,11 @@ _REQUIRED_INFO_KEYS = frozenset([
     "reward_final",
     "crashed",
     "obs_risk_score",
+    "obs_kafka_lag",
     "obs_rolling_p99",
     "action_risk_decision",
     "action_infra_routing",
-    "event_type"
+    "event_type",
 ])
 
 async def main() -> None:
@@ -324,7 +325,10 @@ async def main() -> None:
                 # task-aware score that matches the hackathon rubric.
                 grader = get_grader(task)
                 task_score = grader.grade(trajectory)
-                success = "true" if task_score > 0.0 else "false"
+                # Use a meaningful threshold above the floor sentinel (0.01)
+                # so a completely failed episode is not reported as success.
+                SUCCESS_THRESHOLD = 0.10
+                success = "true" if task_score >= SUCCESS_THRESHOLD else "false"
 
             except Exception as exc:
                 success = "false"
