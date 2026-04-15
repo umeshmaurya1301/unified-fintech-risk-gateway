@@ -11,7 +11,9 @@ tags:
 space_url: "https://unknown1321-unified-fintech-risk-gateway.hf.space"
 
 # Entry point for openenv validate
-entry_point: "unified_gateway:UnifiedFintechEnv"
+# Uses the thin Python bridge that forwards all Gymnasium calls to the
+# Java Spring Boot REST API. The actual environment logic lives in Java.
+entry_point: "openenv_bridge:UnifiedFintechEnv"
 
 # Episode reward bounds (all rewards normalised to [0.0, 1.0])
 reward_range: [0.0, 1.0]

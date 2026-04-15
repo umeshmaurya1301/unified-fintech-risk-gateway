@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # =============================================================================
-# validate-submission.sh — Pre-Submission Validation Script
+# validate-submission.sh — Pre-Submission Validation Script (Spring Boot edition)
 # =============================================================================
 # Run this script before submitting to the Meta OpenEnv Hackathon.
-# It checks all three requirements from the Pre-Submission Checklist:
-#   1. HF Space is live and POST /reset returns 200
-#   2. docker build succeeds locally
-#   3. openenv validate passes
+# It checks all requirements from the Pre-Submission Checklist:
+#   1. Maven test suite passes (Java JUnit 5 tests)
+#   2. HF Space is live and POST /reset returns 200
+#   3. docker build succeeds locally (multi-stage Java build)
+#   4. openenv validate passes (via Python bridge)
+#   5. Bridge self-test passes (openenv_bridge.py)
 #
 # Usage:
 #   chmod +x validate-submission.sh
 #   ./validate-submission.sh
 #
 # Override the Space URL:
-#   SPACE_URL=https://huggingface.co/spaces/unknown1321/unified-fintech-risk-gateway \
-#     ./validate-submission.sh
+#   SPACE_URL=https://your-space.hf.space ./validate-submission.sh
 # =============================================================================
 
 set -e   # abort on first error
@@ -32,7 +33,7 @@ info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
 EXIT_CODE=0
 
 echo "============================================================"
-echo "  UFRG Pre-Submission Validation"
+echo "  UFRG Pre-Submission Validation (Spring Boot)"
 echo "============================================================"
 echo ""
 
@@ -40,8 +41,23 @@ echo ""
 SPACE_URL="${SPACE_URL:-https://unknown1321-unified-fintech-risk-gateway.hf.space}"
 IMAGE_NAME="ufrg-validate"
 
-# ── Check 1: HF Space health ─────────────────────────────────────────────────
-echo "── Check 1: HF Space liveness ──────────────────────────────"
+# ── Check 1: Maven unit tests ─────────────────────────────────────────────────
+echo "── Check 1: Maven / JUnit 5 test suite ────────────────────"
+if ! command -v mvn &> /dev/null; then
+    info "mvn not found in PATH — skipping Java unit tests"
+else
+    info "Running mvn test in ./spring ..."
+    if mvn test -f spring/pom.xml -q 2>&1; then
+        pass "All JUnit 5 tests passed (mvn test)"
+    else
+        fail "mvn test FAILED — review spring/src/test for errors"
+    fi
+fi
+
+echo ""
+
+# ── Check 2: HF Space health ─────────────────────────────────────────────────
+echo "── Check 2: HF Space liveness ──────────────────────────────"
 info "Pinging GET ${SPACE_URL} ..."
 
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "${SPACE_URL}" || echo "000")
@@ -65,49 +81,46 @@ fi
 
 echo ""
 
-# ── Check 2: Docker build ─────────────────────────────────────────────────────
-echo "── Check 2: Docker build ───────────────────────────────────"
+# ── Check 3: Docker build ─────────────────────────────────────────────────────
+echo "── Check 3: Docker build (multi-stage Java) ────────────────"
 if ! command -v docker &> /dev/null; then
     info "Docker not found — skipping build check"
 else
-    info "Building Docker image '${IMAGE_NAME}' ..."
+    info "Building Docker image '${IMAGE_NAME}' (multi-stage: Maven → JRE 21) ..."
     if docker build -t "${IMAGE_NAME}" . --quiet; then
         pass "docker build succeeded"
         # Cleanup
         docker rmi "${IMAGE_NAME}" --force > /dev/null 2>&1 || true
     else
-        fail "docker build FAILED — review Dockerfile and requirements.txt"
+        fail "docker build FAILED — review Dockerfile"
     fi
 fi
 
 echo ""
 
-# ── Check 3: openenv validate ─────────────────────────────────────────────────
-echo "── Check 3: openenv validate ───────────────────────────────"
+# ── Check 4: openenv validate ─────────────────────────────────────────────────
+echo "── Check 4: openenv validate ────────────────────────────────"
 if ! command -v openenv &> /dev/null; then
     info "openenv CLI not found — installing openenv-core ..."
-    pip install openenv-core --quiet
+    pip3 install openenv-core --quiet 2>/dev/null || pip install openenv-core --quiet
 fi
 
+# openenv validate reads openenv.yaml and imports the bridge entry_point
 if openenv validate .; then
     pass "openenv validate PASSED"
 else
-    fail "openenv validate FAILED — review openenv.yaml and unified_gateway.py"
+    fail "openenv validate FAILED — review openenv.yaml and openenv_bridge.py"
 fi
 
 echo ""
 
-# ── Check 4: pytest suite ──────────────────────────────────────────────────────
-echo "── Check 4: pytest suite ───────────────────────────────────"
-if ! command -v pytest &> /dev/null; then
-    info "pytest not found — installing ..."
-    pip install pytest --quiet
-fi
-
-if pytest tests/ -q --tb=short 2>&1; then
-    pass "All pytest tests passed"
+# ── Check 5: Bridge self-test ─────────────────────────────────────────────────
+echo "── Check 5: openenv_bridge.py self-test ────────────────────"
+info "Running bridge self-test against ${SPACE_URL} ..."
+if SPACE_URL="${SPACE_URL}" python3 openenv_bridge.py 2>&1; then
+    pass "openenv_bridge.py self-test PASSED"
 else
-    fail "pytest tests FAILED — review tests/ directory"
+    fail "openenv_bridge.py self-test FAILED — ensure server is running at ${SPACE_URL}"
 fi
 
 echo ""

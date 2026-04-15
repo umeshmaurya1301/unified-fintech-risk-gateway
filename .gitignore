@@ -1,7 +1,51 @@
+# ========================
+# Python
+# ========================
 venv/
 __pycache__/
 *.pyc
-.env
-.DS_Store
+.pytest_cache/
+.mypy_cache/
+.coverage
 
-uv.lock
+# ========================
+# Env / Secrets
+# ========================
+.env
+application-local.properties
+application-prod.properties
+
+# ========================
+# Build artifacts (Java)
+# ========================
+target/
+spring/target/
+*.class
+*.jar
+*.war
+*.ear
+
+# ========================
+# Logs
+# ========================
+*.log
+logs/
+*.out
+*.err
+
+# ========================
+# IntelliJ
+# ========================
+.idea/
+*.iml
+
+# ========================
+# VS Code
+# ========================
+.vscode/
+
+# ========================
+# OS files
+# ========================
+.DS_Store
+Thumbs.db
