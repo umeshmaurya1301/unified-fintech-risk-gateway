@@ -1,18 +1,24 @@
 package com.ufrg.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import java.util.Map;
 
-public record UFRGReward(
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class UFRGReward {
     @JsonProperty("value")
-    double value,
+    private double value;
 
     @JsonProperty("breakdown")
-    Map<String, Double> breakdown,
+    private Map<String, Double> breakdown;
 
     @JsonProperty("crashed")
-    boolean crashed,
+    private boolean crashed;
 
     @JsonProperty("circuit_breaker_tripped")
-    boolean circuitBreakerTripped
-) {}
+    private boolean circuitBreakerTripped;
+}

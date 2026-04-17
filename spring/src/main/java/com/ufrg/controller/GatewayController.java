@@ -76,8 +76,8 @@ public class GatewayController {
 
         Map<String, Object> response = new HashMap<>();
         response.put("observation", result.observation);
-        response.put("reward", result.reward.value());
-        response.put("reward_breakdown", result.reward.breakdown());
+        response.put("reward", result.reward.getValue());
+        response.put("reward_breakdown", result.reward.getBreakdown());
         response.put("done", result.done);
         response.put("info", result.info);
         return response;

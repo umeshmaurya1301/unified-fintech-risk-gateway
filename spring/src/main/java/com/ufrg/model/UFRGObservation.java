@@ -1,20 +1,26 @@
 package com.ufrg.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-public record UFRGObservation(
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class UFRGObservation {
     @JsonProperty("channel")
-    double channel,
+    private double channel;
 
     @JsonProperty("risk_score")
-    double riskScore,
+    private double riskScore;
 
     @JsonProperty("kafka_lag")
-    double kafkaLag,
+    private double kafkaLag;
 
     @JsonProperty("api_latency")
-    double apiLatency,
+    private double apiLatency;
 
     @JsonProperty("rolling_p99")
-    double rollingP99
-) {}
+    private double rollingP99;
+}
