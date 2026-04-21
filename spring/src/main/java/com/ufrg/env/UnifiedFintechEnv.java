@@ -112,26 +112,26 @@ public class UnifiedFintechEnv implements GymEnvironment<UFRGObservation, UFRGAc
 
     @Override
     public StepResult<UFRGObservation, UFRGReward> step(UFRGAction action) {
-        double riskScore = this.currentObs.getRiskScore();
-        double kafkaLag = this.currentObs.getKafkaLag();
-        double rollingP99 = this.currentObs.getRollingP99();
+        double riskScore = this.currentObs.riskScore();
+        double kafkaLag = this.currentObs.kafkaLag();
+        double rollingP99 = this.currentObs.rollingP99();
         String currentEventType = this.lastEventType;
 
         boolean circuitBreakerTripped = false;
         boolean done = false;
 
-        if (action.getCryptoVerify() == 0) {
+        if (action.cryptoVerify() == 0) {
             this.rollingLag += 150.0;
             this.rollingLatency += 200.0;
         } else {
             this.rollingLag -= 100.0;
         }
 
-        if (action.getInfraRouting() == 0) {
+        if (action.infraRouting() == 0) {
             this.rollingLag += 100.0;
-        } else if (action.getInfraRouting() == 1) {
+        } else if (action.infraRouting() == 1) {
             this.rollingLag -= 300.0;
-        } else if (action.getInfraRouting() == 2) {
+        } else if (action.infraRouting() == 2) {
             this.rollingLag = 0.0;
             this.rollingLatency = 50.0;
             circuitBreakerTripped = true;
@@ -142,7 +142,7 @@ public class UnifiedFintechEnv implements GymEnvironment<UFRGObservation, UFRGAc
 
         double reward = 0.8;
 
-        if (action.getInfraRouting() == 1) {
+        if (action.infraRouting() == 1) {
             if ("flash_sale".equals(currentEventType)) {
                 reward -= 0.1;
             } else {
@@ -166,15 +166,15 @@ public class UnifiedFintechEnv implements GymEnvironment<UFRGObservation, UFRGAc
             reward -= 0.1 * proximity;
         }
 
-        if (riskScore > 80.0 && action.getRiskDecision() == 2) {
+        if (riskScore > 80.0 && action.riskDecision() == 2) {
             reward += 0.05;
         }
 
-        if (riskScore > 80.0 && action.getCryptoVerify() == 0) {
+        if (riskScore > 80.0 && action.cryptoVerify() == 0) {
             reward += 0.03;
         }
 
-        if (action.getCryptoVerify() == 1 && action.getRiskDecision() == 0 && riskScore > 80.0) {
+        if (action.cryptoVerify() == 1 && action.riskDecision() == 0 && riskScore > 80.0) {
             reward -= 1.0;
         }
         
@@ -194,7 +194,7 @@ public class UnifiedFintechEnv implements GymEnvironment<UFRGObservation, UFRGAc
         
         Map<String, Double> breakdown = new HashMap<>();
         breakdown.put("baseline", 0.8);
-        if (action.getInfraRouting() == 1) {
+        if (action.infraRouting() == 1) {
             if ("flash_sale".equals(currentEventType)) breakdown.put("throttle_flash_sale_penalty", -0.1);
             else breakdown.put("throttle_penalty", -0.2);
         }
@@ -207,10 +207,10 @@ public class UnifiedFintechEnv implements GymEnvironment<UFRGObservation, UFRGAc
             breakdown.put("lag_proximity_warning", -0.1 * ((this.rollingLag - 3000.0) / 1000.0));
         }
 
-        if (riskScore > 80.0 && action.getRiskDecision() == 2) breakdown.put("challenge_bonus", 0.05);
-        if (riskScore > 80.0 && action.getCryptoVerify() == 0) breakdown.put("fullverify_bonus", 0.03);
+        if (riskScore > 80.0 && action.riskDecision() == 2) breakdown.put("challenge_bonus", 0.05);
+        if (riskScore > 80.0 && action.cryptoVerify() == 0) breakdown.put("fullverify_bonus", 0.03);
 
-        if (action.getCryptoVerify() == 1 && action.getRiskDecision() == 0 && riskScore > 80.0) breakdown.put("fraud_penalty", -1.0);
+        if (action.cryptoVerify() == 1 && action.riskDecision() == 0 && riskScore > 80.0) breakdown.put("fraud_penalty", -1.0);
         if (this.rollingLag > 4000.0 && !circuitBreakerTripped) breakdown.put("crash_override", 0.0);
         
         boolean crashed = this.rollingLag > 4000.0 && !circuitBreakerTripped;
@@ -223,9 +223,9 @@ public class UnifiedFintechEnv implements GymEnvironment<UFRGObservation, UFRGAc
         info.put("obs_risk_score", riskScore);
         info.put("obs_kafka_lag", kafkaLag);
         info.put("obs_rolling_p99", rollingP99);
-        info.put("action_risk_decision", action.getRiskDecision());
-        info.put("action_infra_routing", action.getInfraRouting());
-        info.put("action_crypto_verify", action.getCryptoVerify());
+        info.put("action_risk_decision", action.riskDecision());
+        info.put("action_infra_routing", action.infraRouting());
+        info.put("action_crypto_verify", action.cryptoVerify());
         info.put("reward_raw", reward);
         info.put("reward_final", finalReward);
         info.put("circuit_breaker_tripped", circuitBreakerTripped);
